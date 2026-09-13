@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block content %}
+<h2 class="section">Your Cart</h2>
+<div class="cart-layout">
+<div>
+{% for it in items %}
+<div class="cart-item" data-product-id="{{ it.product_id }}" style="display:flex;gap:16px;background:#fff;margin-bottom:12px">
+  <img src="{{ it.image_url or ('https://loremflickr.com/150/150/' ~ (it.h3_category|replace(' ',',')|lower) ~ '?lock=' ~ it.product_id[5:]) }}"
+       data-name="{{ it.brand_name }}" data-cat="{{ it.h1_category }}" onerror="imgFallback(this)"
+       style="width:110px;height:110px;object-fit:cover;border-radius:6px">
+  <div style="flex:1">
+    <a href="/product/{{ it.product_id }}" style="font-size:16px;font-weight:600">{{ it.product_name }}</a>
+    <div class="brand" style="color:#565959;font-size:12px">{{ it.brand_name }}</div>
+    {% if it.current_stock>0 %}<div class="stock-ok">In stock</div>{% else %}<div class="stock-out">Out of stock</div>{% endif %}
+    <div class="cart-quantity"><span>Quantity</span> <div class="quantity-control"><button type="button" onclick="updateCartQuantity('{{ it.product_id }}',-1)" aria-label="Decrease quantity">−</button><output data-quantity>{{ it.quantity }}</output><button type="button" onclick="updateCartQuantity('{{ it.product_id }}',1)" aria-label="Increase quantity">+</button></div></div>
+    <form method="post" action="/cart/remove" style="margin-top:6px">
+      <input type="hidden" name="product_id" value="{{ it.product_id }}">
+      <button style="background:none;border:none;color:#007185;cursor:pointer;font-size:13px">Remove</button>
+    </form>
+  </div>
+  <div class="price" data-line-total data-unit-price="{{ it.current_price }}">₹{{ '{:,.0f}'.format(it.current_price * it.quantity) }}</div>
+</div>
+{% endfor %}
+{% if not items %}<p>Your cart is empty.</p>{% endif %}
+</div>
+<div class="cart-summary" style="background:#fff;padding:18px;height:fit-content">
+  <div style="font-size:18px">Subtotal: <b class="price" data-grand-total>₹{{ '{:,.0f}'.format(total) }}</b></div>
+  <form method="get" action="/checkout">
+    <button class="btn" style="width:100%;margin-top:14px" {% if not items %}disabled{% endif %}>Proceed to Checkout</button>
+  </form>
+  <small style="color:#565959">Choose your payment method on the next step.</small>
+</div>
+</div>
+{% endblock %}

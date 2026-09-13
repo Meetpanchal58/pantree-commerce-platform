@@ -1,0 +1,12 @@
+{% extends "base.html" %}{% from "_card.html" import product_card with context %}
+{% block content %}
+<section class="hero-band">
+	<div><div class="eyebrow">The new Pantree edit</div><h1>Everyday pieces, <em>well chosen.</em></h1><p>Explore real catalog products across apparel, footwear and accessories.</p><a class="hero-cta" href="/browse">Shop the full catalog <span>→</span></a></div>
+	<div class="hero-art"><span>CURATED<br>FOR YOU</span></div>
+</section>
+<section class="home-section"><div class="section-head"><div><div class="eyebrow">Browse the edit</div><h2 class="section">Shop by department</h2></div><a class="text-link" href="/browse">View all →</a></div>
+	<div class="department-grid">{% for d in departments %}<a class="department" href="/browse?department={{ d|urlencode }}"><span>{{ d }}</span><small>{{ home_stats.products // departments|length if departments else 0 }}+ styles</small><b>Explore →</b></a>{% endfor %}</div>
+</section>
+<section class="home-section"><div class="section-head"><div><div class="eyebrow">Trending now</div><h2 class="section">Top-rated picks</h2></div><a class="text-link" href="/browse?sort=rating">See all →</a></div>
+<div class="grid">{% for p in prods %}{{ product_card(p) }}{% endfor %}</div></section>
+{% endblock %}

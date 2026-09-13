@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="crumb">Home / {{ p.h1_category }} / {{ p.h2_category }} / {{ p.h3_category }}</div>
+<div class="pdp-shell">
+  <img src="{{ p.image_url or ('https://loremflickr.com/500/500/' ~ (p.h3_category|replace(' ',',')|lower) ~ '?lock=' ~ p.product_id[5:]) }}"
+       data-name="{{ p.brand_name }}" data-cat="{{ p.h1_category }}" onerror="imgFallback(this)"
+       style="width:380px;height:380px;object-fit:cover;border-radius:8px;background:#f7f7f7">
+  <div class="pdp-copy">
+    <div style="color:#565959;font-size:14px">{{ p.brand_name }}</div>
+    <h1 style="font-size:24px;margin:4px 0">{{ p.product_name }}</h1>
+    <button class="wishlist-detail" type="button" onclick="toggleWishlist('{{ p.product_id }}',this)">♡ Add to wishlist</button>
+    <div class="rating" style="font-size:15px">{{ '★' * (p.avg_rating|round(0,'floor')|int) if p.avg_rating else '' }} {{ p.avg_rating }}</div>
+    <hr style="margin:12px 0;border:none;border-top:1px solid #e3e6e6">
+    <div class="pdp-price"><span class="price" style="font-size:28px">₹{{ '{:,.0f}'.format(p.current_price) }}</span>
+         <span class="mrp">M.R.P: ₹{{ '{:,.0f}'.format(p.mrp) }}</span></div>
+    <p class="pdp-description" style="margin:14px 0;line-height:1.5">{{ p.product_description }}</p>
+    <div class="pdp-tags">
+      {% for k,v in attrs.items() %}
+        {% if k != 'key_features' %}<span style="display:inline-block;background:#f0f2f2;border-radius:14px;padding:4px 12px;margin:3px;font-size:13px"><b>{{ k }}:</b> {{ v }}</span>{% endif %}
+      {% endfor %}
+    </div>
+    {% if p.current_stock and p.current_stock > 0 %}
+      <div class="stock-ok" style="font-size:15px">In stock — {{ p.current_stock }} available</div>
+      <div class="pdp-actions">
+        <button class="btn" onclick="addToCart('{{ p.product_id }}')">Add to Cart</button>
+        <button class="btn btn-buy" onclick="addToCart('{{ p.product_id }}');setTimeout(()=>location='/cart',600)">Buy Now</button>
+      </div>
+    {% else %}
+      <div class="stock-out" style="font-size:16px">Currently Out of Stock</div>
+      <p style="color:#565959;font-size:13px;margin-top:6px">Tip: use ⟳ Refresh Inventory (top bar) to restock.</p>
+    {% endif %}
+    <div class="pdp-meta">Recommendations and shopping assistance will appear here.</div>
+  </div>
+</div>
+{% endblock %}

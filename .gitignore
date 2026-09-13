@@ -1,0 +1,31 @@
+# Generated data (regenerate with: python generate_data.py --mode initialize)
+data/*.parquet
+data/*.json
+data/_state/
+data/_partitioned/
+data/README.txt
+
+# Live app databases (regenerate with: python webapp/seed_db.py)
+*.db
+*.db-wal
+*.db-shm
+*.duckdb
+
+# Downloaded / copied product images
+webapp/static/products/*.jpg
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+.venv/
+venv/
+env/
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.egg-info/
+.env

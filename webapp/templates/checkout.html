@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="crumb">Home / Cart / Checkout</div>
+<div class="checkout-layout">
+  <section class="checkout-panel">
+    <div class="eyebrow">Final step</div>
+    <h1 class="checkout-title">Choose payment method</h1>
+    <p class="muted">Your order is created only after you confirm payment.</p>
+    {% if msg %}<div class="checkout-error">{{ msg }}</div>{% endif %}
+    <form method="post" action="/checkout/pay" class="payment-form">
+      <div class="address-block">
+        <h2>Order address</h2>
+        <p class="muted">Your home address is prefilled. Edit it when this order should go somewhere else.</p>
+        <div class="address-fields">
+          <label class="field-wide">Address line 1<input name="address_line1" value="{{ address.home_address_line1 or '' }}" required></label>
+          <label class="field-wide">Address line 2<input name="address_line2" value="{{ address.home_address_line2 or '' }}"></label>
+          <label>City<input name="city" value="{{ address.signup_city or '' }}" required></label>
+          <label>State<input name="state" value="{{ address.signup_state or '' }}" required></label>
+          <label>Region<input name="region" value="{{ address.signup_region or '' }}" required></label>
+          <label>Postal code<input name="postal_code" value="{{ address.home_postal_code or '' }}" required></label>
+          <label>Country<input name="country" value="{{ address.home_country or '' }}" required></label>
+          <label>Phone number<input name="phone" value="{{ address.phone or '' }}" type="tel" required></label>
+        </div>
+      </div>
+      <h2>Payment method</h2>
+      <label class="payment-option"><input type="radio" name="payment_method" value="UPI" required><span><b>UPI</b><small>Google Pay, PhonePe or any UPI app</small></span></label>
+      <label class="payment-option"><input type="radio" name="payment_method" value="Credit Card"><span><b>Credit Card</b><small>Visa, Mastercard or American Express</small></span></label>
+      <label class="payment-option"><input type="radio" name="payment_method" value="Debit Card"><span><b>Debit Card</b><small>Pay securely with your debit card</small></span></label>
+      <label class="payment-option"><input type="radio" name="payment_method" value="Net Banking"><span><b>Net Banking</b><small>All major Indian banks supported</small></span></label>
+      <label class="payment-option"><input type="radio" name="payment_method" value="Amazon Pay"><span><b>Amazon Pay</b><small>Use your saved Amazon Pay balance</small></span></label>
+      <label class="payment-option"><input type="radio" name="payment_method" value="COD"><span><b>Cash on Delivery</b><small>Pay when your order arrives</small></span></label>
+      <button class="btn checkout-submit" type="submit">Pay ₹{{ '{:,.0f}'.format(total) }} and complete purchase</button>
+    </form>
+  </section>
+  <aside class="checkout-summary">
+    <div class="eyebrow">Order summary</div>
+    <h2>{{ items|length }} item{% if items|length != 1 %}s{% endif %}</h2>
+    {% for it in items %}<div class="summary-line" data-product-id="{{ it.product_id }}" data-unit-price="{{ it.current_price }}"><span>{{ it.product_name }} × <span data-quantity>{{ it.quantity }}</span><div class="checkout-quantity"><div class="quantity-control"><button type="button" onclick="updateCartQuantity('{{ it.product_id }}',-1)" aria-label="Decrease quantity">−</button><output data-quantity>{{ it.quantity }}</output><button type="button" onclick="updateCartQuantity('{{ it.product_id }}',1)" aria-label="Increase quantity">+</button></div></div></span><b data-line-total>₹{{ '{:,.0f}'.format(it.current_price * it.quantity) }}</b></div>{% endfor %}
+    <div class="summary-total"><span>Total</span><b data-grand-total>₹{{ '{:,.0f}'.format(total) }}</b></div>
+  </aside>
+</div>
+{% endblock %}

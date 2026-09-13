@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="crumb">Home / Your account</div>
+<h1 class="checkout-title">Your account</h1>
+<div class="account-layout">
+  <section class="account-panel">
+    <div class="eyebrow">Personal details</div>
+    <h2>{{ customer.first_name or 'Customer' }} {{ customer.last_name or '' }}</h2>
+    <div class="detail-grid">
+      <div><small>Customer ID</small><b>{{ customer.customer_id }}</b></div>
+      <div><small>Account status</small><b>{{ customer.account_status }}</b></div>
+      <div><small>Email</small><b>{{ customer.email }}</b></div>
+      <div><small>Phone</small><b>{{ customer.phone or 'Not provided' }}</b></div>
+      <div><small>Age bracket</small><b>{{ customer.age_bracket or 'Not provided' }}</b></div>
+      <div><small>Gender</small><b>{{ customer.gender or 'Not provided' }}</b></div>
+    </div>
+  </section>
+  <section class="account-panel">
+    <div class="eyebrow">Home address</div>
+    <p>{{ customer.home_address_line1 or 'Not provided' }}{% if customer.home_address_line2 %}, {{ customer.home_address_line2 }}{% endif %}</p>
+    <p>{{ customer.signup_city }}, {{ customer.signup_state }}, {{ customer.signup_region }} {{ customer.home_postal_code or '' }}</p>
+    <p>{{ customer.home_country or 'Not provided' }}</p>
+  </section>
+  <section class="account-panel account-orders">
+    <div class="eyebrow">Orders</div>
+    {% if orders %}
+      {% for order in orders %}<div class="order-row"><span><b>{{ order.order_id }}</b><small>{{ order.order_timestamp }}</small><small>{{ order.ship_address_line1 or 'Address unavailable' }}, {{ order.ship_city }}, {{ order.ship_state }} {{ order.ship_postal_code or '' }}</small></span><span>{{ order.order_status }}</span><strong>₹{{ '{:,.2f}'.format(order.total_amount) }}</strong></div>{% endfor %}
+    {% else %}<p class="muted">No orders yet.</p>{% endif %}
+  </section>
+</div>
+{% endblock %}

@@ -1,0 +1,53 @@
+<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Sign in · Pantree</title>
+<style>
+ :root{--ink:#17312d;--muted:#6c7d77;--line:#dce9e2;--forest:#123c36;--coral:#e47759;--gold:#e8b657;--paper:#fff}
+*{box-sizing:border-box}body{font-family:"Trebuchet MS",Verdana,sans-serif;color:var(--ink);background:radial-gradient(circle at 8% 12%,#dceddf,transparent 30%),radial-gradient(circle at 90% 80%,#f9dfd3,transparent 30%),#f4f8f5;margin:0;min-height:100vh;display:grid;place-items:center;padding:30px}
+.auth-shell{width:min(1020px,100%);display:grid;grid-template-columns:.85fr 1.15fr;background:var(--paper);border:1px solid var(--line);border-radius:24px;overflow:hidden;box-shadow:0 24px 60px rgba(18,60,54,.14)}
+.auth-intro{padding:48px;background:linear-gradient(145deg,#103a34,#246b59);color:#fff;position:relative;overflow:hidden}.auth-intro:after{content:"";position:absolute;width:270px;height:270px;border:1px solid rgba(255,255,255,.2);border-radius:50%;right:-100px;bottom:-100px;box-shadow:0 0 0 24px rgba(255,255,255,.05),0 0 0 48px rgba(255,255,255,.035)}
+.logo{font-family:Georgia,serif;font-size:34px;font-weight:700;letter-spacing:-1.5px}.logo span{color:#f1c66f}.auth-intro h1{font-family:Georgia,serif;font-size:42px;line-height:1.05;margin:80px 0 16px;max-width:330px}.auth-intro p{color:#d6e9df;line-height:1.7;max-width:330px}.auth-note{display:inline-block;margin-top:34px;color:#f4d78d;font-size:12px;letter-spacing:.08em;text-transform:uppercase;font-weight:700}
+.auth-form{padding:38px 44px;min-width:0}.tab{display:flex;gap:4px;background:#eff6f1;border-radius:10px;padding:4px;margin-bottom:28px}.tab button{flex:1;padding:11px;border:0;background:transparent;color:var(--muted);border-radius:7px;cursor:pointer;font-weight:800}.tab button.active{background:#fff;color:var(--forest);box-shadow:0 2px 8px rgba(18,60,54,.1)}.box h2{font-family:Georgia,serif;font-size:30px;margin:0 0 6px}.box h2:after{content:"";display:block;width:42px;height:3px;background:var(--coral);margin-top:12px;border-radius:3px}.auth-subtitle{color:var(--muted);font-size:13px;margin:0 0 20px}.box label{display:block;color:var(--muted);font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;margin:13px 0 6px}.box input,.box select{width:100%;padding:11px 12px;border:1px solid #cbdad2;border-radius:8px;background:#fbfdfb;color:var(--ink);font:inherit}.box input:focus,.box select:focus{outline:2px solid #b7d9c8;outline-offset:1px}.box form{max-height:calc(100vh - 180px);overflow:auto;padding-right:5px}.box form::-webkit-scrollbar{width:5px}.box form::-webkit-scrollbar-thumb{background:#c8dcd0;border-radius:8px}.box .btn{width:100%;margin-top:22px;background:var(--forest);color:#fff;border:0;padding:12px;border-radius:8px;font-weight:800;cursor:pointer;box-shadow:0 7px 14px rgba(18,60,54,.16)}.box .btn:hover{background:#1b5a4e}.msg{color:#a9472e;background:#fff1ed;border:1px solid #f2c5b8;padding:10px;border-radius:8px;font-size:13px;margin-bottom:14px}.box small{display:block;color:var(--muted);font-size:11px;margin-top:12px;line-height:1.5}.box input[type=checkbox]{width:auto;margin-right:6px;accent-color:var(--forest)}.box label:has(input[type=checkbox]){display:flex;align-items:center;letter-spacing:0;text-transform:none;font-size:12px;color:var(--muted);font-weight:600}
+@media(max-width:760px){body{padding:12px}.auth-shell{display:block;border-radius:18px}.auth-intro{padding:28px}.auth-intro h1{font-size:32px;margin:38px 0 10px}.auth-note{margin-top:18px}.auth-form{padding:28px 22px}.box form{max-height:none}}
+</style></head><body>
+<main class="auth-shell"><section class="auth-intro"><div class="logo">Pan<span>tree</span></div><h1>Everyday pieces, well chosen.</h1><p>A considered storefront for real products, thoughtful details, and an easier way to shop.</p><span class="auth-note">Curated for your everyday</span></section><section class="auth-form"><div class="box">
+  <div class="tab">
+    <button id="tl" class="active" onclick="show('login')">Sign in</button>
+    <button id="ts" onclick="show('signup')">Create account</button>
+  </div>
+  {% if msg %}<div class="msg">{{ msg }}</div>{% endif %}
+  <form id="login" method="post" action="/login">
+    <h2>Welcome back</h2><p class="auth-subtitle">Sign in to continue to your Pantree account.</p>
+    <label>Email</label><input name="email" type="email" required>
+    <label>Password</label><input name="password" type="password" required>
+    <label>Device</label><select name="device"><option>Desktop Web</option><option>Android App</option><option>iOS App</option><option>Mobile Web</option></select>
+    <button class="btn">Sign in</button>
+  </form>
+  <form id="signup" method="post" action="/signup" style="display:none">
+    <h2>Create your account</h2><p class="auth-subtitle">Tell us a little about yourself to get started.</p>
+    <label>First name</label><input name="first_name" required>
+    <label>Last name</label><input name="last_name" required>
+    <label>Email</label><input name="email" type="email" required>
+    <label>Phone number</label><input name="phone" type="tel" required>
+    <label>Password</label><input name="password" type="password" required>
+    <label>Home address</label><input name="address_line1" required placeholder="Address line 1">
+    <input name="address_line2" placeholder="Address line 2 (optional)">
+    <label>City</label><input name="city" required>
+    <label>State</label><input name="state" required>
+    <label>Region</label><input name="region" required>
+    <label>Postal code</label><input name="postal_code" required>
+    <label>Country</label><input name="country" required>
+    <label>Age bracket</label><select name="age_bracket" required><option value="18-24">18-24</option><option value="25-34">25-34</option><option value="35-44">35-44</option><option value="45-54">45-54</option><option value="55+">55+</option></select>
+    <label>Gender</label><select name="gender" required><option value="Female">Female</option><option value="Male">Male</option><option value="Non-binary">Non-binary</option><option value="Prefer not to say">Prefer not to say</option></select>
+    <label><input name="email_opt_in" type="checkbox" value="true"> Email updates</label>
+    <label><input name="sms_opt_in" type="checkbox" value="true"> SMS updates</label>
+    <label>Device</label><select name="device"><option>Desktop Web</option><option>Android App</option><option>iOS App</option><option>Mobile Web</option></select>
+    <button class="btn">Create account &amp; get customer_id</button>
+    <small>A new customer_id is generated and stored in the customers table.</small>
+  </form>
+</div></section></main>
+<script>
+function show(w){document.getElementById('login').style.display=w==='login'?'block':'none';
+document.getElementById('signup').style.display=w==='signup'?'block':'none';
+document.getElementById('tl').classList.toggle('active',w==='login');
+document.getElementById('ts').classList.toggle('active',w==='signup');}
+</script>
+</body></html>

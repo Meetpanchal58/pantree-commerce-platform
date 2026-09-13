@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+<h2 class="section">Your Orders</h2>
+{% if not orders %}<p>No orders yet. Start shopping.</p>{% endif %}
+{% for o in orders %}
+<div class="order-card">
+  <div class="order-header">
+    <div><b>Order {{ o.order_id }}</b><div style="color:#666;font-size:12px">{{ o.order_timestamp }}</div></div>
+    <div><b>{{ o.order_status }}</b><div style="color:#666;font-size:12px">₹{{ '{:,.0f}'.format(o.total_amount) }}</div></div>
+  </div>
+  {% for it in lines.get(o.order_id, []) %}
+  <div class="order-product">
+    <img src="{{ it.image_url }}" style="width:90px;height:90px;object-fit:cover;border-radius:6px" onerror="imgFallback(this)" data-name="{{ it.product_name }}" data-cat="{{ it.h3_category }}">
+    <div style="flex:1">
+      <a href="/product/{{ it.product_id }}"><b>{{ it.product_name }}</b></a>
+      <div style="font-size:13px;color:#666">Qty {{ it.quantity }} · ₹{{ '{:,.0f}'.format(it.net_item_value) }}</div>
+      <div style="margin-top:5px;font-weight:600">{{ it.order_status }}</div>
+    </div>
+  </div>
+  {% endfor %}
+  {% if o.order_status in ['Delivered','Partially Returned'] %}
+  <div class="order-actions">
+    <form method="post" action="/orders/{{ o.order_id }}/status"><input type="hidden" name="action" value="return"><button class="btn" type="submit">Return Order</button></form>
+    <form method="post" action="/orders/{{ o.order_id }}/status"><input type="hidden" name="action" value="replace"><button class="btn btn-buy" type="submit">Replace Order</button></form>
+  </div>
+  <small class="order-note">Returns add the units back to inventory. Same-SKU replacement returns the old unit and issues a replacement unit.</small>
+  {% endif %}
+</div>
+{% endfor %}
+{% endblock %}

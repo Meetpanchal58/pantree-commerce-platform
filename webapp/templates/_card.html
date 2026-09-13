@@ -1,0 +1,26 @@
+{% macro product_card(p) %}
+<div class="card product-card" data-product-id="{{ p.product_id }}">
+  <button class="wishlist-button" type="button" aria-label="Add to wishlist" onclick="toggleWishlist('{{ p.product_id }}',this)">♡</button>
+  <a href="/product/{{ p.product_id }}">
+    <img src="{{ p.image_url or ('https://loremflickr.com/300/300/' ~ (p.h3_category|replace(' ',',')|lower) ~ '?lock=' ~ p.product_id[5:]) }}"
+         data-name="{{ p.brand_name }}" data-cat="{{ p.h1_category }}" onerror="imgFallback(this)"
+         alt="{{ p.product_name }}" loading="lazy">
+    <div class="brand">{{ p.brand_name }}</div>
+    <div class="name">{{ p.product_name }}</div>
+  </a>
+  <div class="rating">{{ '★' * (p.avg_rating|round(0,'floor')|int) if p.avg_rating else '' }}
+     <span style="color:#565959">{{ p.avg_rating if p.avg_rating else '' }}</span></div>
+  <div><span class="price">₹{{ '{:,.0f}'.format(p.current_price) }}</span>
+       <span class="mrp">₹{{ '{:,.0f}'.format(p.mrp) }}</span></div>
+  {% if p.current_stock and p.current_stock > 0 %}
+    <div class="stock-ok">In stock ({{ p.current_stock }})</div>
+    {% set cart_qty = cart_quantities.get(p.product_id, 0) %}
+    {% if cart_qty %}
+      <div class="card-quantity"><small>In your cart</small><div class="quantity-control"><button type="button" onclick="updateCartQuantity('{{ p.product_id }}',-1)" aria-label="Decrease quantity">−</button><output data-quantity>{{ cart_qty }}</output><button type="button" onclick="updateCartQuantity('{{ p.product_id }}',1)" aria-label="Increase quantity">+</button></div></div>
+    {% else %}<button class="btn add-cart-button" onclick="addToCart('{{ p.product_id }}')">Add to Cart</button>{% endif %}
+  {% else %}
+    <div class="stock-out">Out of Stock</div>
+    <button class="btn" disabled>Add to Cart</button>
+  {% endif %}
+</div>
+{% endmacro %}
