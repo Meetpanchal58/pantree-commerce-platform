@@ -9,6 +9,10 @@ and a **SQLite (OLTP) → DuckDB (OLAP)** analytics split.
 > churn, CLTV, RFM, Marketing-Mix-Modelling, Voice-of-Customer, recommendation, and
 > text-to-SQL projects all sit on the same validated foundation.
 
+### [Live Demo](https://pantree-storefront.onrender.com/login)
+
+Hosted on Render's free tier; the first request after inactivity may take 30-60 seconds.
+
 ---
 
 ## What this demonstrates
