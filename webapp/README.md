@@ -46,18 +46,22 @@ The app does not regenerate synthetic rows when a user interacts with it. It rec
 
 - Open/home/category/search/PDP/cart actions → `clickstream`
 - Checkout → `orders` + `transactions` + inventory decrement + `purchase` event
+- Delivery → order and transaction statuses become `Delivered`, with delivery timestamps and an `order_delivered` event
+- Cancellation before delivery → statuses become `Cancelled`/`Refunded`, inventory is restored, and a `CANCELLATION` movement is recorded
 - Return → transaction status becomes `Returned`, `returns` row is created, inventory is increased
 - Same-SKU replacement → original transaction becomes `Replaced`; inventory records a return and a replacement issue
 - All inventory changes → `inventory_movements`
 
 ## Orders
 
-Every website checkout starts as a successful, already-delivered order for demo purposes. The Orders page then allows the user to request:
+Every website checkout starts as a successful `Placed` order. The Orders page then allows the user to:
 
+- **Mark Delivered**
+- **Cancel Order** before delivery
 - **Return Order**
 - **Replace Order**
 
-The database changes accordingly instead of merely changing the UI.
+Each action updates SQLite and synchronously mirrors the changed order, transaction, inventory, movement, and clickstream rows to DuckDB. Cancellation restores the purchased units and marks the payment as refunded.
 
 ## DuckDB
 

@@ -18,7 +18,13 @@
     </div>
   </div>
   {% endfor %}
-  {% if o.order_status in ['Delivered','Partially Returned'] %}
+  {% if o.order_status == 'Placed' %}
+  <div class="order-actions">
+    <form method="post" action="/orders/{{ o.order_id }}/status"><input type="hidden" name="action" value="deliver"><button class="btn btn-buy" type="submit">Mark Delivered</button></form>
+    <form method="post" action="/orders/{{ o.order_id }}/status"><input type="hidden" name="action" value="cancel"><button class="btn" type="submit">Cancel Order</button></form>
+  </div>
+  <small class="order-note">Cancel before delivery to restore the units to inventory and refund the payment.</small>
+  {% elif o.order_status in ['Delivered','Partially Returned'] %}
   <div class="order-actions">
     <form method="post" action="/orders/{{ o.order_id }}/status"><input type="hidden" name="action" value="return"><button class="btn" type="submit">Return Order</button></form>
     <form method="post" action="/orders/{{ o.order_id }}/status"><input type="hidden" name="action" value="replace"><button class="btn btn-buy" type="submit">Replace Order</button></form>

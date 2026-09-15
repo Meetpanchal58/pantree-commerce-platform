@@ -460,7 +460,7 @@ def simulate_inventory(r, dates, products, transactions, returns_df=None):
         inv_value = np.round(closing * costs, 2)
 
         rows.append(pd.DataFrame({
-            "inventory_date": day_key,
+            "inventory_date": day_ts,
             "product_id": pids,
             "seller_id": sellers,
             "warehouse_id": warehouses,
@@ -561,7 +561,7 @@ def generate_marketing(r, dates, state):
             if grp=="Email/CRM": phase*=2.0 if day.dayofweek==2 else .35
             if grp=="Social Ads": phase*=1.25 if day.dayofweek in (4,5) else .9
             spend=base*phase*sm*r.uniform(.86,1.14); imps=int(spend/(65 if grp=="Social Ads" else 45)*1000); clicks=int(imps*r.uniform(.008,.04)); orders=int(clicks*r.uniform(.01,.07))
-            rows.append((day.date(),grp,name,f"cmp_{name.lower().replace(' ','_').replace('/','_')}_{day.strftime('%Y%m')}","West",round(spend*.25,2),int(imps*.25),int(clicks*.25),int(orders*.25))); rows.append((day.date(),grp,name,f"cmp_{name.lower().replace(' ','_').replace('/','_')}_{day.strftime('%Y%m')}","North",round(spend*.25,2),int(imps*.25),int(clicks*.25),int(orders*.25))); rows.append((day.date(),grp,name,f"cmp_{name.lower().replace(' ','_').replace('/','_')}_{day.strftime('%Y%m')}","South",round(spend*.25,2),int(imps*.25),int(clicks*.25),int(orders*.25))); rows.append((day.date(),grp,name,f"cmp_{name.lower().replace(' ','_').replace('/','_')}_{day.strftime('%Y%m')}","East",round(spend*.25,2),int(imps*.25),int(clicks*.25),int(orders*.25)))
+            rows.append((pd.Timestamp(day).normalize(),grp,name,f"cmp_{name.lower().replace(' ','_').replace('/','_')}_{day.strftime('%Y%m')}","West",round(spend*.25,2),int(imps*.25),int(clicks*.25),int(orders*.25))); rows.append((pd.Timestamp(day).normalize(),grp,name,f"cmp_{name.lower().replace(' ','_').replace('/','_')}_{day.strftime('%Y%m')}","North",round(spend*.25,2),int(imps*.25),int(clicks*.25),int(orders*.25))); rows.append((pd.Timestamp(day).normalize(),grp,name,f"cmp_{name.lower().replace(' ','_').replace('/','_')}_{day.strftime('%Y%m')}","South",round(spend*.25,2),int(imps*.25),int(clicks*.25),int(orders*.25))); rows.append((pd.Timestamp(day).normalize(),grp,name,f"cmp_{name.lower().replace(' ','_').replace('/','_')}_{day.strftime('%Y%m')}","East",round(spend*.25,2),int(imps*.25),int(clicks*.25),int(orders*.25)))
     cols=["date","channel_group","channel_name","campaign_id","region","spend","impressions","clicks","orders_attributed"]
     d=pd.DataFrame(rows,columns=cols); d=pd.concat([old,d],ignore_index=True) if not old.empty else d; d.to_parquet(path,index=False)
     return d
@@ -580,7 +580,7 @@ def generate_product_affinity(r, products):
     path = DATA / "product_affinity.parquet"
     txn_path = DATA / "transactions.parquet"
     tx = pd.read_parquet(txn_path) if txn_path.exists() else pd.DataFrame()
-    pmeta = products.set_index("product_id")
+    pmeta = products.set_index("product_id").to_dict("index")
 
     pair_counts = defaultdict(int)
     if not tx.empty:
@@ -628,8 +628,8 @@ def generate_product_affinity(r, products):
             for q in sample:
                 if q == p.product_id:
                     continue
-                qr = pmeta.loc[q]
-                sim_score = (2 if qr.usage == p.usage else 0) + (1 if qr.h4_colour == p.h4_colour else 0)
+                qr = pmeta[q]
+                sim_score = (2 if qr["usage"] == p.usage else 0) + (1 if qr["h4_colour"] == p.h4_colour else 0)
                 scored.append((sim_score, q))
             scored.sort(reverse=True)
             candidates.extend([q for _, q in scored[:2]])
@@ -639,18 +639,18 @@ def generate_product_affinity(r, products):
                 continue
             pc = pair_counts.get((p.product_id, q), 0)
             vc = view_counts.get((p.product_id, q), 0)
-            qrow = pmeta.loc[q]
+            qrow = pmeta[q]
 
-            if qrow.h3_category in comp:
+            if qrow["h3_category"] in comp:
                 atype, base = "complementary_product", .72
-            elif qrow.h3_category == p.h3_category:
+            elif qrow["h3_category"] == p.h3_category:
                 atype, base = "similar_product", .55
             else:
                 atype, base = "frequently_bought_together", .45
 
             score = float(np.clip(
                 base + min(pc, 50) * .006 + min(vc, 100) * .0008
-                + (.08 if qrow.usage == p.usage else 0),
+                + (.08 if qrow["usage"] == p.usage else 0),
                 .05, .99
             ))
             rows.append((p.product_id, q, atype, round(score, 4), pc, vc, "rule+observed"))

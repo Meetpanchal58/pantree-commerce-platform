@@ -378,14 +378,13 @@ def checkout(payment_method: str=Form(...), address_line1: str=Form(...), addres
     payment_methods={"UPI","Credit Card","Debit Card","Net Banking","COD","Amazon Pay"}
     if payment_method not in payment_methods:
         con.close(); return RedirectResponse("/checkout?msg=Select+a+valid+payment+method",status_code=303)
-    # A successful website checkout is immediately represented as Delivered, per the demo requirement.
     for it in items:
         stock=con.execute("SELECT current_stock FROM inventory WHERE product_id=?",(it["product_id"],)).fetchone()
         buy=min(int(it["quantity"]),max(int(stock["current_stock"]),0)) if stock else 0
         if buy<=0: continue
         price=float(it["current_price"]); gross=round(price*buy,2); discount=round(max(float(it["mrp"])-price,0)*buy,2); net=round(gross,2)
         txid=uid("txn")
-        vals=(txid,oid,cid,it["product_id"],it["seller_id"],ts,buy,float(it["mrp"]),price,price,float(it["unit_cost"]),discount,None,"BAU",payment_method,"Delivered","Success",city,state,region,address_line1,address_line2,postal_code,country,phone,ts,gross,net,round(net-float(it["unit_cost"])*buy,2),None)
+        vals=(txid,oid,cid,it["product_id"],it["seller_id"],ts,buy,float(it["mrp"]),price,price,float(it["unit_cost"]),discount,None,"BAU",payment_method,"Placed","Success",city,state,region,address_line1,address_line2,postal_code,country,phone,None,gross,net,round(net-float(it["unit_cost"])*buy,2),None)
         con.execute(f"""INSERT INTO transactions
             (transaction_id,order_id,customer_id,product_id,seller_id,order_timestamp,quantity,mrp,listed_price,
              unit_selling_price,unit_cost,discount_amount,coupon_code,campaign_type,payment_method,order_status,
@@ -404,8 +403,7 @@ def checkout(payment_method: str=Form(...), address_line1: str=Form(...), addres
         total+=net
     if not tx_rows:
         con.close(); return RedirectResponse("/cart?msg=Out+of+stock",status_code=303)
-    delivered=ts
-    order_vals=(oid,cid,ts,"Delivered","Success",round(total,2),ts,delivered,ts)
+    order_vals=(oid,cid,ts,"Placed","Success",round(total,2),ts,None,ts)
     con.execute("INSERT INTO orders VALUES (?,?,?,?,?,?,?,?,?)",order_vals)
     mirror_order(dict(zip(["order_id","customer_id","order_timestamp","order_status","payment_status","total_amount","created_at","delivered_timestamp","updated_at"],order_vals)))
     con.execute("DELETE FROM cart WHERE customer_id=?",(cid,))
@@ -432,13 +430,40 @@ def update_order_status(order_id: str, action: str=Form(...), sid: str=Cookie(No
     if not s: con.close(); return RedirectResponse("/login",status_code=303)
     order=con.execute("SELECT * FROM orders WHERE order_id=? AND customer_id=?",(order_id,s["customer_id"])).fetchone()
     if not order: con.close(); return RedirectResponse("/orders",status_code=303)
-    allowed={"return":"Return Requested","replace":"Replacement Requested"}
+    allowed={"deliver":"Delivered","cancel":"Cancelled","return":"Return Requested","replace":"Replacement Requested"}
     if action not in allowed: con.close(); return RedirectResponse("/orders",status_code=303)
-    if order["order_status"] not in {"Delivered","Partially Returned"}:
-        con.close(); return RedirectResponse("/orders",status_code=303)
     lines=con.execute("SELECT * FROM transactions WHERE order_id=? AND customer_id=?",(order_id,s["customer_id"])).fetchall()
     ts=now()
-    if action=="return":
+    if action=="deliver":
+        if order["order_status"] != "Placed":
+            con.close(); return RedirectResponse("/orders",status_code=303)
+        for x in lines:
+            if x["order_status"] != "Placed": continue
+            con.execute("UPDATE transactions SET order_status='Delivered', delivered_timestamp=? WHERE transaction_id=?",(ts,x["transaction_id"]))
+            mirror_transaction(dict(con.execute("SELECT * FROM transactions WHERE transaction_id=?",(x["transaction_id"],)).fetchone()))
+            log_event(con,s["customer_id"],sid,s["device_type"],"order_delivered","orders",x["product_id"])
+        con.execute("UPDATE orders SET order_status='Delivered',delivered_timestamp=?,updated_at=? WHERE order_id=?",(ts,ts,order_id))
+        mirror_order(dict(con.execute("SELECT * FROM orders WHERE order_id=?",(order_id,)).fetchone()))
+    elif action=="cancel":
+        if order["order_status"] != "Placed":
+            con.close(); return RedirectResponse("/orders",status_code=303)
+        changed=0
+        for x in lines:
+            if x["order_status"] != "Placed": continue
+            con.execute("UPDATE transactions SET order_status='Cancelled', payment_status='Refunded', net_item_value=0, gross_margin=0 WHERE transaction_id=?",(x["transaction_id"],))
+            mirror_transaction(dict(con.execute("SELECT * FROM transactions WHERE transaction_id=?",(x["transaction_id"],)).fetchone()))
+            stock=con.execute("SELECT current_stock FROM inventory WHERE product_id=?",(x["product_id"],)).fetchone(); newstock=int(stock["current_stock"])+int(x["quantity"])
+            con.execute("UPDATE inventory SET current_stock=? WHERE product_id=?",(newstock,x["product_id"]))
+            mirror_inventory({"product_id":x["product_id"],"current_stock":newstock,"base_stock":None})
+            movement={"movement_id":uid("mov"),"movement_timestamp":ts,"product_id":x["product_id"],"quantity_delta":int(x["quantity"]),"movement_type":"CANCELLATION","order_id":order_id,"transaction_id":x["transaction_id"],"reason":"customer order cancelled"}
+            con.execute("INSERT INTO inventory_movements VALUES (?,?,?,?,?,?,?,?)",tuple(movement.values())); mirror_inventory_movement(movement)
+            log_event(con,s["customer_id"],sid,s["device_type"],"order_cancelled","orders",x["product_id"]); changed+=1
+        if changed:
+            con.execute("UPDATE orders SET order_status='Cancelled',payment_status='Refunded',updated_at=? WHERE order_id=?",(ts,order_id))
+            mirror_order(dict(con.execute("SELECT * FROM orders WHERE order_id=?",(order_id,)).fetchone()))
+    elif action=="return":
+        if order["order_status"] not in {"Delivered","Partially Returned"}:
+            con.close(); return RedirectResponse("/orders",status_code=303)
         changed=0
         for x in lines:
             if x["order_status"] not in {"Delivered","Partially Returned"}: continue
@@ -455,6 +480,8 @@ def update_order_status(order_id: str, action: str=Form(...), sid: str=Cookie(No
             status="Returned"
             con.execute("UPDATE orders SET order_status=?,updated_at=? WHERE order_id=?",(status,ts,order_id)); mirror_order(dict(con.execute("SELECT * FROM orders WHERE order_id=?",(order_id,)).fetchone()))
     else:
+        if order["order_status"] not in {"Delivered","Partially Returned"}:
+            con.close(); return RedirectResponse("/orders",status_code=303)
         # Same-SKU replacement: return the old unit into stock, then consume a replacement unit.
         changed=0
         for x in lines:
