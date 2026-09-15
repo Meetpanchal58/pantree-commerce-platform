@@ -2,11 +2,18 @@
 SQLite is the source of truth for the web app. DuckDB is an analytical mirror.
 """
 from pathlib import Path
+import os
 import duckdb
 import pandas as pd
 
 BASE = Path(__file__).resolve().parent
 DUCKDB = BASE / "pantree_analytics.duckdb"
+
+# Live per-event mirroring to DuckDB is best-effort analytics only. On a shared/served
+# environment (e.g. Render) set PANTREE_LIVE_MIRROR=0 to disable it and avoid DuckDB
+# single-writer lock contention; rebuild the analytical mirror on demand via
+# sync_from_sqlite(). It must NEVER break a web request.
+MIRROR_ENABLED = os.getenv("PANTREE_LIVE_MIRROR", "1") == "1"
 
 TABLE_KEYS = {
     "clickstream": "event_id",
@@ -40,41 +47,45 @@ def _duckdb_frame(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def mirror_rows(table: str, df: pd.DataFrame):
-    """Upsert a small changed batch into DuckDB."""
-    if df is None or df.empty:
+    """Upsert a small changed batch into DuckDB. Best-effort: never raises to the caller."""
+    if not MIRROR_ENABLED or df is None or df.empty:
         return
-    table = _safe(table)
-    pk = TABLE_KEYS[table]
-    con = ensure_duckdb()
     try:
-        df = _duckdb_frame(df)
-        if not con.execute("SELECT count(*) FROM information_schema.tables WHERE table_name=?", [table]).fetchone()[0]:
-            con.register("_incoming", df)
-            con.execute(f"CREATE TABLE {table} AS SELECT * FROM _incoming")
-            con.unregister("_incoming")
-        else:
-            columns = [row[0] for row in con.execute(
-                "SELECT column_name FROM information_schema.columns WHERE table_name=? ORDER BY ordinal_position",
-                [table],
-            ).fetchall()]
-            for column in df.columns:
-                if column not in columns:
-                    con.execute(f"ALTER TABLE {table} ADD COLUMN {column} VARCHAR")
-            columns = [row[0] for row in con.execute(
-                "SELECT column_name FROM information_schema.columns WHERE table_name=? ORDER BY ordinal_position",
-                [table],
-            ).fetchall()]
-            missing = [column for column in columns if column not in df.columns]
-            if missing:
-                raise ValueError(f"Missing columns for DuckDB mirror {table}: {missing}")
-            con.register("_incoming", df)
-            con.execute(f"DELETE FROM {table} WHERE {pk} IN (SELECT {pk} FROM _incoming)")
-            names = ", ".join(columns)
-            con.execute(f"INSERT INTO {table} ({names}) SELECT {names} FROM _incoming")
-            con.unregister("_incoming")
-        con.commit()
-    finally:
-        con.close()
+        table = _safe(table)
+        pk = TABLE_KEYS[table]
+        con = ensure_duckdb()
+        try:
+            df = _duckdb_frame(df)
+            if not con.execute("SELECT count(*) FROM information_schema.tables WHERE table_name=?", [table]).fetchone()[0]:
+                con.register("_incoming", df)
+                con.execute(f"CREATE TABLE {table} AS SELECT * FROM _incoming")
+                con.unregister("_incoming")
+            else:
+                columns = [row[0] for row in con.execute(
+                    "SELECT column_name FROM information_schema.columns WHERE table_name=? ORDER BY ordinal_position",
+                    [table],
+                ).fetchall()]
+                for column in df.columns:
+                    if column not in columns:
+                        con.execute(f"ALTER TABLE {table} ADD COLUMN {column} VARCHAR")
+                columns = [row[0] for row in con.execute(
+                    "SELECT column_name FROM information_schema.columns WHERE table_name=? ORDER BY ordinal_position",
+                    [table],
+                ).fetchall()]
+                missing = [column for column in columns if column not in df.columns]
+                if missing:
+                    raise ValueError(f"Missing columns for DuckDB mirror {table}: {missing}")
+                con.register("_incoming", df)
+                con.execute(f"DELETE FROM {table} WHERE {pk} IN (SELECT {pk} FROM _incoming)")
+                names = ", ".join(columns)
+                con.execute(f"INSERT INTO {table} ({names}) SELECT {names} FROM _incoming")
+                con.unregister("_incoming")
+            con.commit()
+        finally:
+            con.close()
+    except Exception as e:
+        # analytics mirror is best-effort; log and continue so the web request succeeds
+        print(f"[analytics_sync] mirror skipped for {table}: {e}")
 
 
 def mirror_event(row: dict):
