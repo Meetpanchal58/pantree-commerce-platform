@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: pantree-storefront
+    runtime: python
+    plan: free
+    buildCommand: |
+      pip install -r requirements.txt
+      PANTREE_CUSTOMERS=3000 PANTREE_PRODUCTS=3000 python generate_data.py --mode initialize
+      python webapp/seed_db.py
+    startCommand: cd webapp && uvicorn app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11"
