@@ -677,7 +677,7 @@ customers or products.
 ## Data analysis
 
 `analysis/pantree_insights.ipynb` explores the generated warehouse with charts; rebuild it with
-`python analysis/build_notebook.py`. Findings on the default dataset:
+`pip install -r requirements-analysis.txt` then `python analysis/build_notebook.py`. Findings on the default dataset:
 
 - **Conversion:** 2.7% of 815,666 sessions end in a purchase; only 9% of cart adds are bought.
 - **Cash on delivery:** 6.6% of COD parcels come back undelivered (RTO) vs 2.7% for prepaid (2.4×).
