@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-08T21:29:31+00:00",
+  "generated_at": "2026-11-08T22:16:08+00:00",
   "settings": {
     "sample_limit": 400000,
     "pool_size": 100,
@@ -1006,8 +1006,10 @@
   "order_counts": {
     "test_orders": 5633,
     "orders_with_new_products": 5433,
-    "orders_only_rebuying_previous_products": 200,
+    "orders_dropped_no_history": 26,
+    "orders_only_rebuying_previous_products": 174,
     "orders_with_purchase_in_list": 764,
+    "orders_with_purchase_in_list_dropped_no_history": 7,
     "dropped_list_under_min_pool": 0,
     "dropped_list_all_purchased": 0,
     "ranking_only_orders": 757

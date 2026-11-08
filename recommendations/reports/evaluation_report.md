@@ -1,6 +1,6 @@
 # Recommendation evaluation report
 
-Generated 2026-11-08T21:29:31+00:00 by `python -m recommendations.evaluate`.
+Generated 2026-11-08T22:16:08+00:00 by `python -m recommendations.evaluate`.
 
 **Question asked:** for each real order in the held-out period, given everything known one hour before it, does the system rank the products the customer actually bought near the top?
 
@@ -155,8 +155,9 @@ Ranking **all** eligible products by true taste, the top 100 contains a product 
 ## Why the order counts differ
 
 - 5,633 paid orders fall in the test period.
-- 200 of them only re-bought products the customer already had; those products are excluded from candidates, so the end-to-end tables use 5,433 orders.
-- 764 orders had a bought product in the candidate list. Ranking-only tables need at least 10 candidates and at least one product that wasn't bought: 0 dropped for a short list and 0 because every candidate was bought, leaving 757.
+- 26 came from customers with no earlier views or purchases; a known issue (feature building groups by the history anchor and drops groups without one) leaves them out of the scored tables. Kept as-is so results stay comparable; fixing it is a follow-up.
+- 174 only re-bought products the customer already had; those products are excluded from candidates, so the end-to-end tables use 5,433 orders.
+- 764 orders had a bought product in the candidate list (7 of them among the no-history orders above). Ranking-only tables need at least 10 candidates and at least one product that wasn't bought: 0 dropped for a short list and 0 because every candidate was bought, leaving 757.
 
 
 ## What the new ranker relies on (share of total gain)
