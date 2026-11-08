@@ -546,7 +546,7 @@ class SuperTokensAuthenticationTests(unittest.TestCase):
                 )
 
         self.assertEqual(response.status_code, 503)
-        self.assertIn("OpenSMS delivery is not configured", response.body.decode())
+        self.assertIn("Phone sign-in is unavailable here", response.body.decode())
         create_code.assert_not_awaited()
 
     def test_partial_opensms_configuration_is_rejected(self):
@@ -799,6 +799,22 @@ class SuperTokensAuthenticationTests(unittest.TestCase):
                 "/account", cookies={"sid": "forged"}, follow_redirects=False
             )
         self.assertEqual(protected.status_code, 401)
+
+    def test_login_page_offers_email_only_when_sms_is_not_configured(self):
+        client = TestClient(storefront.app)
+        with patch.object(
+            storefront.auth,
+            "delivery_channel_configured",
+            side_effect=lambda channel: channel == "email",
+        ):
+            login_page = client.get("/login")
+
+        self.assertEqual(login_page.status_code, 200)
+        self.assertIn('<label for="identifier">Email address</label>', login_page.text)
+        self.assertIn('id="identifier" name="identifier" type="email"', login_page.text)
+        self.assertIn("code sent to your email", login_page.text)
+        self.assertNotIn("Email or mobile number", login_page.text)
+        self.assertNotIn("+1 415 555 2671", login_page.text)
 
     def test_healthcheck_requires_the_durable_storefront_schema(self):
         con = open_test_db(self.database)
