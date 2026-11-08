@@ -59,6 +59,7 @@
 	<div class="department-grid">{% for d in departments %}<a class="department" href="/browse?department={{ d|urlencode }}"><span>{{ d }}</span><small>{{ home_stats.products // departments|length if departments else 0 }}+ styles</small><b>Explore →</b></a>{% endfor %}</div>
 </section>
 
+<script src="/static/rec_tracking.js"></script>
 <script>
 function renderRecommendationCard(item) {
 	const card = document.createElement("article");
@@ -67,7 +68,7 @@ function renderRecommendationCard(item) {
 	card.dataset.stock = item.current_stock;
 
 	const link = document.createElement("a");
-	link.href = `/product/${encodeURIComponent(item.product_id)}`;
+	link.href = window.PantreeRecs ? PantreeRecs.link(item) : `/product/${encodeURIComponent(item.product_id)}`;
 	const image = document.createElement("img");
 	image.src = item.image_url || `https://loremflickr.com/300/300/${encodeURIComponent(item.category || "fashion")}?lock=${encodeURIComponent(item.product_id)}`;
 	image.alt = item.name || "Recommended product";
@@ -127,6 +128,7 @@ function renderRecommendationCard(item) {
 
 	card.append(wishlist, link, rating, prices, stock);
 	applyRecommendationCartState(card, Number(item.cart_quantity || 0));
+	if (window.PantreeRecs) PantreeRecs.track(card, item);
 	return card;
 }
 

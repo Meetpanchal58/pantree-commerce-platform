@@ -19,8 +19,12 @@ from ..core import (
     get_session,
     json,
     log_event,
+    now,
     tpl,
+    uid,
 )
+
+from ..rec_logging import log_click
 
 router = APIRouter()
 
@@ -200,7 +204,13 @@ def search(q: str, request: Request, sid: str = Cookie(None)):
 
 
 @router.get("/product/{pid}", response_class=HTMLResponse)
-def pdp(pid: str, request: Request, sid: str = Cookie(None)):
+def pdp(
+    pid: str,
+    request: Request,
+    sid: str = Cookie(None),
+    rec: str | None = None,
+    pos: int | None = None,
+):
     con = db()
     s = get_session(con, sid)
     if not s:
@@ -209,6 +219,9 @@ def pdp(pid: str, request: Request, sid: str = Cookie(None)):
     log_event(
         con, s["customer_id"], sid, s["device_type"], "pdp_view", "pdp", product_id=pid
     )
+    if rec and pos is not None:
+        # Opened from a recommendation card: count the click (rec_logging.py).
+        log_click(con, rec, pos, s["customer_id"], pid, now(), uid)
     ensure_wishlist(con)
     p = con.execute(
         """SELECT p.*, i.current_stock FROM products p JOIN inventory i USING(product_id)

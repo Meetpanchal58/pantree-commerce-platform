@@ -20,9 +20,34 @@ from ..core import (
     ml_recommend,
     run_in_threadpool,
     tpl,
+    now,
+    uid,
 )
+from ..rec_logging import assign_variant, log_impressions, mark_seen
 
 router = APIRouter()
+
+
+@router.post("/api/rec-events/seen")
+async def recommendations_seen(request: Request, sid: str = Cookie(None)):
+    """Mark recommendation cards as seen (sent by the page when a card is on screen)."""
+    con = db()
+    try:
+        session = get_session(con, sid)
+        if not session:
+            return JSONResponse({"detail": "Authentication required"}, status_code=401)
+        try:
+            body = await request.json()
+        except json.JSONDecodeError:
+            return JSONResponse({"detail": "Request body must be valid JSON"}, status_code=422)
+        seen = body.get("seen") if isinstance(body, dict) else None
+        if not isinstance(seen, list):
+            return JSONResponse({"detail": "seen must be a list"}, status_code=422)
+        updated = mark_seen(con, session["customer_id"], seen, now())
+        con.commit()
+        return {"ok": True, "updated": updated}
+    finally:
+        con.close()
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -126,6 +151,9 @@ async def recommendations_api(surface: str, request: Request, sid: str = Cookie(
         ).fetchall()
     ]
 
+    variant = assign_variant(customer_id)
+    if variant == "control":
+        context["use_ranker"] = False  # A/B control group: retrieval order only
     try:
         try:
             items = await run_in_threadpool(ml_recommend, customer_id, surface, context)
@@ -160,6 +188,12 @@ async def recommendations_api(surface: str, request: Request, sid: str = Cookie(
                 for item in items
                 if item["product_id"] in product_details
             ]
+        # Log what was served so click-through can be measured (rec_logging.py).
+        items = log_impressions(
+            con, uid("rec"), customer_id, session["session_id"], surface,
+            context.get("intent"), variant, items, now(), uid,
+        )
+        con.commit()
         if surface == "homepage":
             request.app.state.homepage_feed_responses += 1
             if request.app.state.homepage_feed_responses >= 2:

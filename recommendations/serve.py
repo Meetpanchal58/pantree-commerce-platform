@@ -640,7 +640,8 @@ def _recommend_from_config(
             )
 
     merged = filtered
-    booster = _load_ranker() if event_counts_ready() else None
+    use_ranker = context.get("use_ranker", True)  # False for the A/B control group
+    booster = _load_ranker() if use_ranker and event_counts_ready() else None
     if booster and len(merged) > 1 and model_uses_current_features(booster):
         _, product_counts = read_event_counts()
         live_history = [str(pid) for pid in context.get("recent_product_ids", []) or []]

@@ -87,6 +87,7 @@
     <button class="pdp-carousel-arrow next" type="button" aria-label="Show more similar products" hidden>›</button>
   </div>
 </section>
+<script src="/static/rec_tracking.js"></script>
 <script>
 function setupRecommendationCarousel(container) {
   if (container.dataset.carouselInitialized) return;
@@ -117,7 +118,7 @@ function renderRecommendationCard(item) {
   card.dataset.stock = item.current_stock;
 
   const link = document.createElement("a");
-  link.href = `/product/${encodeURIComponent(item.product_id)}`;
+  link.href = window.PantreeRecs ? PantreeRecs.link(item) : `/product/${encodeURIComponent(item.product_id)}`;
   const image = document.createElement("img");
   image.src = item.image_url || `https://loremflickr.com/300/300/${encodeURIComponent(item.category || "fashion")}?lock=${encodeURIComponent(item.product_id)}`;
   image.alt = item.name || "Recommended product";
@@ -171,6 +172,7 @@ function renderRecommendationCard(item) {
   stock.textContent = `In stock (${Number(item.current_stock).toLocaleString("en-IN")})`;
   card.append(wishlist, link, rating, prices, stock);
   applyRecommendationCartState(card, Number(item.cart_quantity || 0));
+  if (window.PantreeRecs) PantreeRecs.track(card, item);
   return card;
 }
 
