@@ -9,13 +9,30 @@ from .common import DATA, read_realized_transactions
 
 logger = logging.getLogger(__name__)
 EVENT_WEIGHTS = {"pdp_view": 1.0, "add_to_cart": 3.0, "purchase": 5.0}
+# Serving hyperparameters (see recommendations/tune_als.py for how they were chosen).
+ALS_PARAMS = {"factors": 48, "regularization": 0.1, "iterations": 15}
 _WARM_LOCK = Lock()
 _MODEL_READY = False
 
 
-@lru_cache(maxsize=2)
-def _fit_model(as_of: str | None = None):
-    """Fit ALS once per process and retain the sparse training matrix."""
+@lru_cache(maxsize=8)
+def _fit_model(
+    as_of: str | None = None,
+    factors: int | None = None,
+    regularization: float | None = None,
+    iterations: int | None = None,
+    weights: tuple[float, float, float] | None = None,
+):
+    """Fit ALS once per (cut-off, settings) and retain the sparse training matrix.
+
+    ``weights`` is (view, add_to_cart, purchase); defaults come from EVENT_WEIGHTS.
+    """
+    factors = factors or ALS_PARAMS["factors"]
+    regularization = ALS_PARAMS["regularization"] if regularization is None else regularization
+    iterations = iterations or ALS_PARAMS["iterations"]
+    event_weights = (
+        dict(zip(("pdp_view", "add_to_cart", "purchase"), weights)) if weights else EVENT_WEIGHTS
+    )
     try:
         import implicit
         from scipy.sparse import coo_matrix
@@ -30,10 +47,10 @@ def _fit_model(as_of: str | None = None):
     events["event_timestamp"] = pd.to_datetime(events["event_timestamp"], errors="coerce")
     if as_of is not None:
         events = events[events["event_timestamp"] < pd.Timestamp(as_of)]
-    events = events[events["event_type"].isin(EVENT_WEIGHTS)].dropna(
+    events = events[events["event_type"].isin(event_weights)].dropna(
         subset=["customer_id", "product_id", "event_timestamp"]
     )
-    events["weight"] = events["event_type"].map(EVENT_WEIGHTS)
+    events["weight"] = events["event_type"].map(event_weights)
     interactions = events.groupby(["customer_id", "product_id"])["weight"].sum()
 
     orders = read_realized_transactions().copy()
@@ -49,7 +66,7 @@ def _fit_model(as_of: str | None = None):
         right_on=["customer_id", "event_day"],
         how="inner",
     )
-    purchases = orders.groupby(["customer_id", "product_id"])["quantity"].sum() * EVENT_WEIGHTS["purchase"]
+    purchases = orders.groupby(["customer_id", "product_id"])["quantity"].sum() * event_weights["purchase"]
     same_day_bonus = (
         same_day_orders.groupby(["customer_id", "product_id"])["quantity"].sum() * 0.5
     )
@@ -71,7 +88,7 @@ def _fit_model(as_of: str | None = None):
 
     with threadpool_limits(limits=1, user_api="blas"):
         model = implicit.als.AlternatingLeastSquares(
-            factors=48, regularization=0.1, iterations=15, random_state=17,
+            factors=factors, regularization=regularization, iterations=iterations, random_state=17,
             num_threads=1,
         )
         model.fit(matrix, show_progress=False)
@@ -82,11 +99,19 @@ def get_collaborative(
     customer_id: str,
     limit: int = 100,
     as_of: pd.Timestamp | None = None,
+    params: dict | None = None,
 ) -> list[dict]:
     """Retrieve ALS recommendations for a known customer."""
     if as_of is None and not _MODEL_READY:
         return []
-    fitted = _fit_model(as_of.isoformat() if as_of is not None else None)
+    params = params or {}
+    fitted = _fit_model(
+        as_of.isoformat() if as_of is not None else None,
+        params.get("factors"),
+        params.get("regularization"),
+        params.get("iterations"),
+        tuple(params["weights"]) if params.get("weights") else None,
+    )
     if fitted is None:
         return []
     model, matrix, customer_ids, products = fitted

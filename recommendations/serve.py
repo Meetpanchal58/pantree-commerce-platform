@@ -12,6 +12,8 @@ import pandas as pd
 
 from .candidates import collaborative, content, fbt, fusion, popularity
 from .candidates.common import (
+    customer_histories,
+    customer_histories_ready,
     event_counts_ready,
     gender_is_compatible,
     read_event_counts,
@@ -19,7 +21,7 @@ from .candidates.common import (
     read_realized_transactions,
     read_stock,
 )
-from .ranker import score_candidates
+from .ranker import customer_profile, model_uses_current_features, score_candidates
 
 logger = logging.getLogger("recommendations")
 
@@ -357,6 +359,16 @@ def _catalog() -> pd.DataFrame:
     return read_products()
 
 
+def _has_purchase_history(customer_id: str | None, context: dict[str, Any]) -> bool:
+    """True if the customer bought anything (live orders or warehouse history)."""
+    if context.get("purchased_product_ids"):
+        return True
+    if not customer_id or read_realized_transactions.cache_info().currsize == 0:
+        return False
+    transactions = read_realized_transactions()
+    return bool((transactions["customer_id"] == customer_id).any())
+
+
 def _exclude_purchased(
     customer_id: str | None, context: dict[str, Any]
 ) -> set[str]:
@@ -447,6 +459,7 @@ def warm_recommendation_caches() -> None:
     read_stock()
     read_realized_transactions()
     read_event_counts()
+    customer_histories()
     popularity.warm_popularity()
     popularity.warm_activity_cache()
     popularity.get_popular(100)
@@ -628,18 +641,29 @@ def _recommend_from_config(
 
     merged = filtered
     booster = _load_ranker() if event_counts_ready() else None
-    if booster and len(merged) > 1:
-        customer_counts, product_counts = read_event_counts()
-        rank_surface = surface if surface in {"homepage", "product", "cart"} else "homepage"
+    if booster and len(merged) > 1 and model_uses_current_features(booster):
+        _, product_counts = read_event_counts()
+        live_history = [str(pid) for pid in context.get("recent_product_ids", []) or []]
+        live_bought = [str(pid) for pid in context.get("purchased_product_ids", []) or []]
+        stored = (
+            customer_histories().get(customer_id, {})
+            if customer_id and customer_histories_ready()
+            else {}
+        )
+        bought = list(dict.fromkeys(live_bought + stored.get("bought", [])))
+        profile = customer_profile(
+            bought + live_history + stored.get("viewed", []), catalog, purchase_count=len(bought)
+        )
+        profile["event_count"] = max(
+            profile["event_count"], int(context.get("online_event_count", 0))
+        )
         merged = score_candidates(
             merged,
             model=booster,
-            customer_event_count=max(
-                int(customer_counts.get(customer_id, 0)),
-                int(context.get("online_event_count", 0)),
-            ),
+            products=catalog,
+            profile=profile,
             product_event_counts=product_counts,
-            surface=rank_surface,
+            anchor_product_id=product_id,
         )
 
     merged.sort(
@@ -682,6 +706,15 @@ def recommend(
                 "personalized": 1.1,
             },
         }
+        if not _has_purchase_history(customer_id, context):
+            # Segment-aware policy: in the offline evaluation, popularity ranked
+            # first-time buyers' purchases far better than personal signals, so
+            # customers without purchases see trending items first (personal
+            # items still fill the rest of the row).
+            config["candidate_sources"] = config["candidate_sources"] + [
+                ("trending", _get_popular, 100)
+            ]
+            config["fusion_weights"] = {**config["fusion_weights"], "trending": 1.5}
     elif surface == "homepage" and intent == "trending":
         config = {
             **config,
