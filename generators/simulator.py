@@ -488,6 +488,8 @@ def simulate_inventory(r, dates, products, transactions, returns_df=None):
     df = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
     if not old.empty:
         df = pd.concat([old, df], ignore_index=True)
+    if not df.empty:
+        df["inventory_date"] = pd.to_datetime(df["inventory_date"])
     df.to_parquet(path, index=False)
     return df
 
@@ -563,7 +565,12 @@ def generate_marketing(r, dates, state):
             spend=base*phase*sm*r.uniform(.86,1.14); imps=int(spend/(65 if grp=="Social Ads" else 45)*1000); clicks=int(imps*r.uniform(.008,.04)); orders=int(clicks*r.uniform(.01,.07))
             rows.append((pd.Timestamp(day).normalize(),grp,name,f"cmp_{name.lower().replace(' ','_').replace('/','_')}_{day.strftime('%Y%m')}","West",round(spend*.25,2),int(imps*.25),int(clicks*.25),int(orders*.25))); rows.append((pd.Timestamp(day).normalize(),grp,name,f"cmp_{name.lower().replace(' ','_').replace('/','_')}_{day.strftime('%Y%m')}","North",round(spend*.25,2),int(imps*.25),int(clicks*.25),int(orders*.25))); rows.append((pd.Timestamp(day).normalize(),grp,name,f"cmp_{name.lower().replace(' ','_').replace('/','_')}_{day.strftime('%Y%m')}","South",round(spend*.25,2),int(imps*.25),int(clicks*.25),int(orders*.25))); rows.append((pd.Timestamp(day).normalize(),grp,name,f"cmp_{name.lower().replace(' ','_').replace('/','_')}_{day.strftime('%Y%m')}","East",round(spend*.25,2),int(imps*.25),int(clicks*.25),int(orders*.25)))
     cols=["date","channel_group","channel_name","campaign_id","region","spend","impressions","clicks","orders_attributed"]
-    d=pd.DataFrame(rows,columns=cols); d=pd.concat([old,d],ignore_index=True) if not old.empty else d; d.to_parquet(path,index=False)
+    d=pd.DataFrame(rows,columns=cols)
+    d["date"] = pd.to_datetime(d["date"])
+    if not old.empty:
+        old["date"] = pd.to_datetime(old["date"])
+        d = pd.concat([old,d],ignore_index=True)
+    d.to_parquet(path,index=False)
     return d
 
 def refresh_mmm():
@@ -736,16 +743,60 @@ def run(mode="initialize", days=None):
         sim_days = max((end - start).days + 1, 1)
         log(f"Increment window: {start.date()} -> {end.date()} ({sim_days:,} days)")
 
-        nnew = max(0, int(len(cust) * 0.006 * sim_days / 30))
+        target_customers = C.INCREMENT_TARGET_CUSTOMERS
+        nnew = (
+            max(0, target_customers - len(cust))
+            if target_customers > 0
+            else max(0, int(len(cust) * 0.006 * sim_days / 30))
+        )
+        numeric_ids = cust["customer_id"].astype(str).str.extract(r"(\d+)$")[0]
+        state["next_customer"] = max(
+            int(state["next_customer"]),
+            int(numeric_ids.dropna().astype(int).max()) + 1,
+        )
         if nnew:
             def add_customers():
                 start_id = int(state["next_customer"])
-                tmp = build_customers(r, nnew, state, start_id=start_id, start_date=start, end_date=end)
-                out = pd.concat([cust, tmp], ignore_index=True).drop_duplicates("customer_id")
+                months = pd.date_range(start.normalize().replace(day=1), end, freq="MS")
+                days_by_month = [
+                    (min(end, month + pd.offsets.MonthEnd(0))
+                     - max(start.normalize(), month)).days + 1
+                    for month in months
+                ]
+                allocations = []
+                assigned = 0
+                for days in days_by_month[:-1]:
+                    count = nnew * days // sim_days
+                    allocations.append(count)
+                    assigned += count
+                allocations.append(nnew - assigned)
+
+                cohorts = []
+                next_id = start_id
+                for month, count in zip(months, allocations):
+                    if not count:
+                        continue
+                    cohort_start = max(start.normalize(), month)
+                    cohort_end = min(end, month + pd.offsets.MonthEnd(0))
+                    cohort = build_customers(
+                        r,
+                        count,
+                        state,
+                        start_id=next_id,
+                        start_date=cohort_start,
+                        end_date=cohort_end,
+                    )
+                    cohorts.append(cohort)
+                    next_id += count
+                added = pd.concat(cohorts, ignore_index=True)
+                out = pd.concat([cust, added], ignore_index=True)
                 out.to_parquet(DATA / "customer_master.parquet", index=False)
-                state["next_customer"] = start_id + nnew
+                state["next_customer"] = next_id
                 return out, latent_customer_profiles(r, out)
-            cust, prof = stage(f"Adding new customers ({nnew:,})", add_customers)
+            cust, prof = stage(
+                f"Adding new customers ({nnew:,}; target total {len(cust) + nnew:,})",
+                add_customers,
+            )
 
     # Idempotent increment: if a prior run crashed before state.json was committed,
     # remove the uncommitted window and rebuild it deterministically from the prior state.

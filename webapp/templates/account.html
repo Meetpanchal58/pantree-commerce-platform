@@ -9,7 +9,7 @@
     <div class="detail-grid">
       <div><small>Customer ID</small><b>{{ customer.customer_id }}</b></div>
       <div><small>Account status</small><b>{{ customer.account_status }}</b></div>
-      <div><small>Email</small><b>{{ customer.email }}</b></div>
+      <div><small>Email</small><b>{{ customer.email or 'Not provided' }}</b></div>
       <div><small>Phone</small><b>{{ customer.phone or 'Not provided' }}</b></div>
       <div><small>Age bracket</small><b>{{ customer.age_bracket or 'Not provided' }}</b></div>
       <div><small>Gender</small><b>{{ customer.gender or 'Not provided' }}</b></div>

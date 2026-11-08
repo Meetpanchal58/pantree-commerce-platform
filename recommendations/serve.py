@@ -1,0 +1,767 @@
+"""Personalized product recommendations for the Pantree warehouse."""
+
+from __future__ import annotations
+
+import logging
+from functools import lru_cache
+import time
+from typing import Any
+
+import pandas as pd
+
+from .candidates import collaborative, content, fbt, fusion, popularity
+from .candidates.common import (
+    event_counts_ready,
+    gender_is_compatible,
+    read_event_counts,
+    read_products,
+    read_realized_transactions,
+    read_stock,
+)
+from .ranker import score_candidates
+
+logger = logging.getLogger("recommendations")
+
+
+def _context_product_ids(context: dict[str, Any]) -> list[str]:
+    product_ids = context.get("cart", [])
+    if isinstance(product_ids, dict):
+        product_ids = list(product_ids)
+    if not isinstance(product_ids, (list, tuple, set)):
+        product_ids = []
+    normalized_ids = []
+    for product in product_ids:
+        product_id = (
+            product.get("product_id", product.get("id"))
+            if isinstance(product, dict)
+            else product
+        )
+        if product_id:
+            normalized_ids.append(str(product_id))
+    product_ids = normalized_ids
+    product_id = context.get("product_id")
+    if product_id:
+        product_ids.append(str(product_id))
+    return list(dict.fromkeys(product_ids))
+
+
+def _excluded_product_ids(context: dict[str, Any]) -> set[str]:
+    excluded = context.get("exclude_product_ids", [])
+    if isinstance(excluded, str):
+        excluded = [value for value in excluded.split(",") if value]
+    if not isinstance(excluded, (list, tuple, set)):
+        return set()
+    return {str(product_id) for product_id in excluded if product_id}
+
+
+def _get_collaborative(
+    customer_id: str | None = None,
+    limit: int = 100,
+    **_: Any,
+) -> list[dict]:
+    return collaborative.get_collaborative(customer_id, limit=limit) if customer_id else []
+
+
+def _get_content(
+    product_id: str | None = None,
+    context: dict[str, Any] | None = None,
+    limit: int = 100,
+    **_: Any,
+) -> list[dict]:
+    context = context or {}
+    product_id = product_id or context.get("product_id")
+    if not product_id:
+        return []
+    excluded = _excluded_product_ids(context)
+    return content.get_similar_products(
+        str(product_id), limit=limit, exclude_product_ids=excluded
+    )
+
+
+def _get_fbt(
+    product_id: str | None = None,
+    context: dict[str, Any] | None = None,
+    limit: int = 100,
+    **_: Any,
+) -> list[dict]:
+    product_ids = _context_product_ids(context or {})
+    if product_id:
+        product_ids.append(str(product_id))
+    return fbt.get_frequently_bought_together(
+        list(dict.fromkeys(product_ids)),
+        limit=limit,
+        exclude_product_ids=_excluded_product_ids(context or {}),
+    )
+
+
+def _get_popular(limit: int = 100, **_: Any) -> list[dict]:
+    return popularity.get_popular(limit=limit)
+
+
+def _get_personalized(
+    customer_id: str | None = None,
+    limit: int = 100,
+    context: dict[str, Any] | None = None,
+    **_: Any,
+) -> list[dict]:
+    recent_product_ids = (context or {}).get("recent_product_ids", [])
+    if not isinstance(recent_product_ids, list):
+        recent_product_ids = []
+    return (
+        popularity.get_personalized(
+            customer_id, limit=limit, recent_product_ids=recent_product_ids
+        )
+        if customer_id
+        else []
+    )
+
+
+def _get_deals(limit: int = 100, **_: Any) -> list[dict]:
+    return popularity.get_deals(limit=limit)
+
+
+# ---------------------------------------------------------------------------
+# Surface configuration
+# ---------------------------------------------------------------------------
+
+SURFACE_CONFIG: dict[str, dict[str, Any]] = {
+    "homepage": {
+        "candidate_sources": [
+            ("collaborative", _get_collaborative, 100),
+            ("personalized", _get_personalized, 100),
+            ("content", _get_content, 100),
+            ("popularity", _get_popular, 100),
+        ],
+        "fusion_weights": {
+            "collaborative": 0.40,
+            "recent_activity": 0.75,
+            "deals_on_viewed": 0.75,
+            "personalized": 0.75,
+            "content": 0.25,
+            "popularity": 0.35,
+            "trending": 0.35,
+            "deals": 0.35,
+        },
+        "max_candidates": 300,
+        "top_k": 30,
+        "exclude_purchased": True,
+    },
+    "product": {
+        "candidate_sources": [
+            ("content", _get_content, 100),
+            ("fbt", _get_fbt, 50),
+            ("collaborative", _get_collaborative, 50),
+        ],
+        "fusion_weights": {
+            "content": 0.40,
+            "fbt": 0.30,
+            "collaborative": 0.30,
+        },
+        "max_candidates": 200,
+        "top_k": 100,
+        "exclude_purchased": True,
+    },
+    "cart": {
+        "candidate_sources": [
+            ("fbt", _get_fbt, 80),
+            ("collaborative", _get_collaborative, 80),
+            ("content", _get_content, 80),
+        ],
+        "fusion_weights": {
+            "fbt": 0.50,
+            "collaborative": 0.50,
+            "content": 0.50,
+        },
+        "max_candidates": 200,
+        "top_k": 8,
+        "exclude_purchased": True,
+    },
+    "checkout": {
+        "candidate_sources": [
+            ("collaborative", _get_collaborative, 60),
+            ("popularity", _get_popular, 60),
+        ],
+        "fusion_weights": {
+            "collaborative": 0.50,
+            "popularity": 0.50,
+        },
+        "max_candidates": 200,
+        "top_k": 6,
+        "exclude_purchased": True,
+    },
+    "category": {
+        "candidate_sources": [
+            ("content", _get_content, 100),
+            ("popularity", _get_popular, 100),
+        ],
+        "fusion_weights": {
+            "content": 0.50,
+            "popularity": 0.50,
+        },
+        "max_candidates": 300,
+        "top_k": 12,
+        "exclude_purchased": True,
+    },
+    "search": {
+        "candidate_sources": [
+            ("content", _get_content, 100),
+            ("collaborative", _get_collaborative, 80),
+        ],
+        "fusion_weights": {
+            "content": 0.60,
+            "collaborative": 0.40,
+        },
+        "max_candidates": 300,
+        "top_k": 10,
+        "exclude_purchased": True,
+    },
+    "browse": {
+        "candidate_sources": [
+            ("popularity", _get_popular, 100),
+            ("content", _get_content, 100),
+        ],
+        "fusion_weights": {
+            "popularity": 0.50,
+            "content": 0.50,
+        },
+        "max_candidates": 300,
+        "top_k": 12,
+        "exclude_purchased": True,
+    },
+}
+
+# ---------------------------------------------------------------------------
+# Sub-surfaces — intent-driven slices for multi-section pages
+# ---------------------------------------------------------------------------
+
+SUB_SURFACES: dict[str, dict[str, Any]] = {
+    # ── Home page sections ──────────────────────────────────────────────────
+    "homepage-personalized": {
+        "label": "Just For You",
+        "candidate_sources": [
+            ("collaborative", _get_collaborative, 100),
+            ("personalized", _get_personalized, 100),
+        ],
+        "fusion_weights": {
+            "collaborative": 1.0,
+            "recent_activity": 1.0,
+            "deals_on_viewed": 1.0,
+        },
+        "max_candidates": 150,
+        "top_k": 12,
+        "exclude_purchased": True,
+        "requires_customer": True,
+    },
+    "homepage-trending": {
+        "label": "Trending Now",
+        "candidate_sources": [
+            ("popularity", _get_popular, 150),
+        ],
+        "fusion_weights": {"popularity": 1.0},
+        "max_candidates": 150,
+        "top_k": 12,
+        "exclude_purchased": False,
+        "requires_customer": False,
+    },
+    "homepage-deals": {
+        "label": "Today's Deals",
+        "candidate_sources": [
+            ("deals", _get_deals, 150),
+        ],
+        "fusion_weights": {"deals": 1.0},
+        "max_candidates": 150,
+        "top_k": 12,
+        "exclude_purchased": False,
+        "requires_customer": False,
+    },
+
+    # ── PDP (Product Detail Page) sections ──────────────────────────────────
+    "pdp-similar": {
+        "label": "Similar Products",
+        "candidate_sources": [
+            ("content", _get_content, 100),
+        ],
+        "fusion_weights": {"content": 1.0},
+        "max_candidates": 100,
+        "top_k": 100,
+        "exclude_purchased": True,
+        "requires_product": True,
+    },
+    "pdp-fbt": {
+        "label": "Frequently Bought Together",
+        "candidate_sources": [
+            ("fbt", _get_fbt, 50),
+        ],
+        "fusion_weights": {"fbt": 1.0},
+        "max_candidates": 50,
+        "top_k": 50,
+        "exclude_purchased": True,
+        "requires_product": True,
+    },
+    "pdp-also-viewed": {
+        "label": "Also Viewed",
+        "candidate_sources": [
+            ("collaborative", _get_collaborative, 100),
+            ("popularity", _get_popular, 50),
+        ],
+        "fusion_weights": {
+            "collaborative": 0.60,
+            "popularity": 0.40,
+        },
+        "max_candidates": 150,
+        "top_k": 10,
+        "exclude_purchased": True,
+        "requires_customer": True,
+    },
+    "pdp-recommendations": {
+        "label": "Recommended For You",
+        "candidate_sources": [
+            ("content", _get_content, 50),
+            ("collaborative", _get_collaborative, 50),
+        ],
+        "fusion_weights": {
+            "content": 0.50,
+            "collaborative": 0.50,
+        },
+        "max_candidates": 150,
+        "top_k": 8,
+        "exclude_purchased": True,
+        "requires_product": True,
+        "requires_customer": True,
+    },
+}
+
+# Map parent surfaces to their sub-surface keys
+SURFACE_SUB_SECTIONS: dict[str, list[str]] = {
+    "homepage": [
+        "homepage-personalized",
+        "homepage-trending",
+        "homepage-deals",
+    ],
+    "product": [
+        "pdp-fbt",
+        "pdp-similar",
+        "pdp-also-viewed",
+        "pdp-recommendations",
+    ],
+}
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _catalog() -> pd.DataFrame:
+    """Return the full product catalog."""
+    return read_products()
+
+
+def _exclude_purchased(
+    customer_id: str | None, context: dict[str, Any]
+) -> set[str]:
+    """Return the set of product IDs already purchased by *customer_id*."""
+    live_purchases = context.get("purchased_product_ids", [])
+    if not isinstance(live_purchases, (list, tuple, set)):
+        live_purchases = []
+    excluded = {str(product_id) for product_id in live_purchases if product_id}
+    if customer_id is None:
+        return excluded
+    if read_realized_transactions.cache_info().currsize == 0:
+        logger.info("Warehouse purchases are warming; using live purchase history")
+        return excluded
+    transactions = read_realized_transactions()
+    excluded.update(
+        transactions.loc[
+            transactions["customer_id"] == customer_id, "product_id"
+        ].astype(str)
+    )
+    return excluded
+
+
+@lru_cache(maxsize=1)
+def _load_ranker() -> Any | None:
+    """Return a trained LightGBM booster, or None if unavailable."""
+    from .ranker import MODEL_PATH
+
+    booster_path = MODEL_PATH
+    if not booster_path.exists():
+        return None
+    import lightgbm as lgb
+
+    return lgb.Booster(model_file=str(booster_path))
+
+
+def _similar_fallback(
+    product_id: str,
+    catalog: pd.DataFrame,
+    stock: pd.Series,
+    excluded: set[str],
+    limit: int,
+) -> list[dict[str, Any]]:
+    if product_id not in catalog.index:
+        return []
+    anchor = catalog.loc[product_id]
+    anchor_category = anchor["h3_category"]
+    if pd.isna(anchor_category):
+        return []
+    candidates = catalog[
+        (catalog["h3_category"] == anchor_category)
+        & catalog["gender"].map(
+            lambda gender: gender_is_compatible(anchor["gender"], gender)
+        )
+        & catalog["is_active"].fillna(False).astype(bool)
+    ].copy()
+    candidates = candidates[
+        candidates.index.isin(stock.index)
+        & stock.reindex(candidates.index).gt(0)
+        & ~candidates.index.isin(excluded)
+    ].copy()
+    candidates["_product_key"] = candidates.index.astype(str)
+    candidates = candidates.sort_values(
+        ["avg_rating", "review_count", "_product_key"],
+        ascending=[False, False, True],
+        kind="mergesort",
+    )
+    results = []
+    for candidate_id in candidates.index[:limit]:
+        product = candidates.loc[candidate_id]
+        results.append({
+            "product_id": candidate_id,
+            "score": 0.65,
+            "retrieval_score": 0.65,
+            "source": "similar_fallback",
+            "reason": "Same product type and compatible audience",
+            "name": product["product_name"],
+            "image_url": product["image_url"],
+            "category": product["h3_category"],
+            "brand_name": product["brand_name"],
+            "current_price": product["current_price"],
+        })
+    return results
+
+
+def warm_recommendation_caches() -> None:
+    """Prepare expensive warehouse/model caches outside API request handling."""
+    read_products()
+    read_stock()
+    read_realized_transactions()
+    read_event_counts()
+    popularity.warm_popularity()
+    popularity.warm_activity_cache()
+    popularity.get_popular(100)
+    collaborative.warm_model()
+    content.warm_index()
+
+
+def warm_homepage_caches() -> None:
+    """Load only the small catalog data needed for an immediate homepage response."""
+    read_products()
+    read_stock()
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
+def _recommend_from_config(
+    customer_id: str | None,
+    surface: str,
+    product_id: str | None,
+    context: dict[str, Any],
+    config: dict[str, Any],
+) -> list[dict[str, Any]]:
+    requested_limit = int(context.get("limit", config.get("top_k", 10)))
+    if requested_limit < 1:
+        raise ValueError("Recommendation limit must be positive")
+
+    candidate_list: list[dict[str, Any]] = []
+    for source_name, fn, source_limit in config["candidate_sources"]:
+        kwargs: dict[str, Any] = {"limit": source_limit}
+        if customer_id:
+            kwargs["customer_id"] = customer_id
+        if product_id:
+            kwargs["product_id"] = product_id
+        kwargs["context"] = context
+        source_started = time.perf_counter()
+        cands = fn(**kwargs)
+        for candidate in cands:
+            candidate.setdefault("source", source_name)
+        candidate_list.extend(cands)
+        logger.info(
+            "[%s] source=%s candidates=%d elapsed_ms=%.1f",
+            surface,
+            source_name,
+            len(cands),
+            (time.perf_counter() - source_started) * 1000,
+        )
+
+    if not candidate_list:
+        if surface != "product":
+            candidate_list = _get_popular(limit=config.get("top_k", 10))
+            if candidate_list:
+                logger.info(
+                    "[%s] fallback=%s",
+                    surface,
+                    candidate_list[0].get("source", "unknown"),
+                )
+        elif not (context.get("intent") == "similar" and product_id):
+            return []
+        if not candidate_list and not (
+            surface == "product"
+            and context.get("intent") == "similar"
+            and product_id
+        ):
+            return []
+
+    merged = fusion.merge_candidates(
+        candidate_list,
+        limit=config["max_candidates"],
+        weights=config["fusion_weights"],
+    )
+    if config.get("exclude_purchased"):
+        excluded = _exclude_purchased(customer_id, context)
+    else:
+        excluded = set()
+    excluded.update(_excluded_product_ids(context))
+    excluded.update(_context_product_ids(context))
+    if product_id:
+        excluded.add(product_id)
+    merged = [item for item in merged if item["product_id"] not in excluded]
+
+    catalog = _catalog()
+    stock = read_stock()
+    anchor_category = None
+    if product_id in catalog.index:
+        anchor_category = catalog.at[product_id, "h3_category"]
+        if pd.isna(anchor_category):
+            anchor_category = None
+    intent = context.get("intent") if surface == "product" else None
+    category_filter = context.get("category")
+    anchor_gender = (
+        catalog.at[product_id, "gender"]
+        if product_id in catalog.index
+        else None
+    )
+    filtered = []
+    for candidate in merged:
+        product_id_value = candidate["product_id"]
+        if product_id_value not in catalog.index or product_id_value not in stock.index:
+            continue
+        product = catalog.loc[product_id_value]
+        if pd.isna(product["is_active"]) or not bool(product["is_active"]):
+            continue
+        if float(stock.loc[product_id_value]) <= 0:
+            continue
+        category = product["h3_category"]
+        if intent == "similar" and (
+            anchor_category is None or pd.isna(category) or category != anchor_category
+        ):
+            continue
+        if intent == "complementary" and (
+            anchor_category is None or pd.isna(category) or category == anchor_category
+        ):
+            continue
+        if surface == "product" and intent in {"similar", "complementary"} and (
+            not gender_is_compatible(anchor_gender, product["gender"])
+        ):
+            continue
+        product_categories = {
+            value
+            for value in (
+                product["h1_category"],
+                product["h2_category"],
+                product["h3_category"],
+            )
+            if isinstance(value, str)
+        }
+        if category_filter and category_filter not in product_categories:
+            continue
+        candidate.update(
+            {
+                "name": product["product_name"],
+                "image_url": product["image_url"],
+                "category": category,
+                "brand_name": product["brand_name"],
+                "current_price": product["current_price"],
+                "reason": candidate.get("reason", "Recommended for you"),
+            }
+        )
+        candidate["score"] = float(candidate.get("score", 0.0))
+        candidate["retrieval_score"] = float(
+            candidate.get("retrieval_score", candidate["score"])
+        )
+        filtered.append(candidate)
+
+    if intent == "similar" and len(filtered) < requested_limit and product_id:
+        existing_ids = {item["product_id"] for item in filtered}
+        fallback = _similar_fallback(
+            product_id,
+            catalog,
+            stock,
+            excluded | existing_ids,
+            requested_limit - len(filtered),
+        )
+        filtered.extend(fallback)
+        if fallback:
+            logger.info(
+                "[%s] fallback=same_category_gender count=%d",
+                surface,
+                len(fallback),
+            )
+
+    merged = filtered
+    booster = _load_ranker() if event_counts_ready() else None
+    if booster and len(merged) > 1:
+        customer_counts, product_counts = read_event_counts()
+        rank_surface = surface if surface in {"homepage", "product", "cart"} else "homepage"
+        merged = score_candidates(
+            merged,
+            model=booster,
+            customer_event_count=max(
+                int(customer_counts.get(customer_id, 0)),
+                int(context.get("online_event_count", 0)),
+            ),
+            product_event_counts=product_counts,
+            surface=rank_surface,
+        )
+
+    merged.sort(
+        key=lambda item: (-float(item.get("score", 0.0)), item["product_id"])
+    )
+    results = merged[: min(requested_limit, config.get("top_k", requested_limit))]
+    logger.info(
+        "[%s] result_count=%d result_sources=%s",
+        surface,
+        len(results),
+        sorted({item.get("source", "unknown") for item in results}),
+    )
+    return results
+
+
+def recommend(
+    customer_id: str | None,
+    surface: str,
+    context: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Return ranked recommendations for a customer and storefront surface."""
+    context = dict(context or {})
+    config = SURFACE_CONFIG.get(surface)
+    if config is None:
+        raise ValueError(f"Unknown surface: {surface!r}")
+
+    product_id = context.get("product_id")
+    intent = context.get("intent")
+    if surface == "homepage" and intent == "personalized":
+        config = {
+            **config,
+            "candidate_sources": [
+                ("collaborative", _get_collaborative, 100),
+                ("personalized", _get_personalized, 100),
+            ],
+            "fusion_weights": {
+                "collaborative": 1.0,
+                "recent_activity": 1.1,
+                "deals_on_viewed": 1.1,
+                "personalized": 1.1,
+            },
+        }
+    elif surface == "homepage" and intent == "trending":
+        config = {
+            **config,
+            "candidate_sources": [("trending", _get_popular, 100)],
+            "fusion_weights": {"trending": 1.0},
+            "exclude_purchased": False,
+        }
+    elif surface == "homepage" and intent is not None:
+        raise ValueError(f"Unknown homepage recommendation intent: {intent!r}")
+
+    if surface == "product":
+        if intent == "similar":
+            config = {
+                **config,
+                "candidate_sources": [("content", _get_content, 100)],
+                "fusion_weights": {"content": 1.0},
+            }
+        elif intent == "complementary":
+            config = {
+                **config,
+                "candidate_sources": [("fbt", _get_fbt, 50)],
+                "fusion_weights": {"fbt": 1.0},
+            }
+        elif intent is not None:
+            raise ValueError(f"Unknown product recommendation intent: {intent!r}")
+    return _recommend_from_config(customer_id, surface, product_id, context, config)
+
+
+def recommend_sections(
+    customer_id: str | None,
+    surface: str,
+    context: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Return *all* sub-surface sections for a parent *surface*.
+
+    Each returned dict has the shape:
+    ``{"key": "...", "label": "...", "items": [...], "count": ...}``
+
+    Parameters
+    ----------
+    surface:
+        Parent surface (``"homepage"`` or ``"product"``).
+    customer_id:
+        Logged-in user identifier (optional).
+    context:
+        Extra metadata, including a product anchor or cart for product-page surfaces.
+
+    Returns
+    -------
+    List of section dicts — one per sub-surface that was successfully
+    populated.
+    """
+    context = dict(context or {})
+    product_id = context.get("product_id")
+    sub_keys = SURFACE_SUB_SECTIONS.get(surface, [])
+    sections: list[dict[str, Any]] = []
+    shown_product_ids = _excluded_product_ids(context)
+
+    for sub_key in sub_keys:
+        sub_cfg = SUB_SURFACES.get(sub_key)
+        if sub_cfg is None:
+            continue
+
+        # Skip if prerequisites not met
+        if sub_cfg.get("requires_customer") and customer_id is None:
+            continue
+        if sub_cfg.get("requires_product") and product_id is None:
+            continue
+
+        section_context = dict(context)
+        section_context["limit"] = sub_cfg.get("top_k", 10)
+        if surface == "product":
+            section_context["exclude_product_ids"] = list(shown_product_ids)
+            if sub_key == "pdp-similar":
+                section_context["intent"] = "similar"
+            elif sub_key == "pdp-fbt":
+                section_context["intent"] = "complementary"
+        items = _recommend_from_config(
+            customer_id, surface, product_id, section_context, sub_cfg
+        )
+        if not items:
+            continue
+        shown_product_ids.update(item["product_id"] for item in items)
+
+        sections.append({
+            "key": sub_key,
+            "label": sub_cfg["label"],
+            "items": items,
+            "count": len(items),
+        })
+
+        logger.info(
+            "[%s] %s items in section '%s'",
+            sub_key,
+            len(items),
+            sub_cfg["label"],
+        )
+
+    return sections

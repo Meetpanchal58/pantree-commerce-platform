@@ -10,6 +10,7 @@ data/README.txt
 *.db-wal
 *.db-shm
 *.duckdb
+/webapp/.local/
 
 # Downloaded / copied product images
 webapp/static/products/*.jpg
@@ -28,4 +29,14 @@ env/
 .idea/
 .vscode/
 *.egg-info/
+recommendations/ranker.txt
+recommendations/.cache/
 .env
+
+# Added by Euron Code
+.euron/cache/
+.euron/knowledge/
+.euron/security/
+.euron/settings.local.json
+.env.*
+!.env.example
