@@ -110,6 +110,19 @@ class SuperTokensAuthenticationTests(unittest.TestCase):
         ]
         for db_patch in self.db_patches:
             db_patch.start()
+        # Existing accounts used by the sign-in tests (sign-in never creates accounts).
+        con = open_test_db(self.database)
+        storefront.ensure_auth_tables(con)
+        con.executemany(
+            "INSERT INTO customer_pii (customer_id, email, phone) VALUES (?, ?, ?)",
+            [
+                ("seed-email", "user@example.com", None),
+                ("seed-phone-in", None, "+919876543210"),
+                ("seed-phone-us", None, "+14155552671"),
+            ],
+        )
+        con.commit()
+        con.close()
 
     def tearDown(self):
         for db_patch in reversed(self.db_patches):
@@ -606,28 +619,30 @@ class SuperTokensAuthenticationTests(unittest.TestCase):
         self.assertIn("SMTP delivery is not configured", response.body.decode())
         create_code.assert_not_awaited()
 
-    def test_verified_first_login_creates_customer_and_super_tokens_session(self):
+    def _consumed(self, user_id="st-user-1", email="new@example.com"):
         user = User(
-            user_id="st-user-1",
+            user_id=user_id,
             is_primary_user=True,
             tenant_ids=["public"],
-            emails=["new@example.com"],
+            emails=[email],
             phone_numbers=[],
             third_party=[],
             webauthn=None,
             login_methods=[],
             time_joined=0,
         )
-        consumed = ConsumeCodeOkResult(
+        return ConsumeCodeOkResult(
             created_new_recipe_user=True,
             user=user,
-            recipe_user_id=RecipeUserId("st-user-1"),
+            recipe_user_id=RecipeUserId(user_id),
             consumed_device=ConsumedDevice(
                 pre_auth_session_id="preauth-1",
                 failed_code_input_attempt_count=0,
-                email="new@example.com",
+                email=email,
             ),
         )
+
+    def _verify(self, consumed, mirror=None):
         auth_session = SimpleNamespace(get_handle=lambda: "st-session-handle")
         with (
             patch.object(
@@ -640,46 +655,67 @@ class SuperTokensAuthenticationTests(unittest.TestCase):
                 "create_new_session",
                 new=AsyncMock(return_value=auth_session),
             ),
-            patch.object(storefront.auth, "mirror_customer") as mirror_customer,
+            patch.object(storefront.auth, "mirror_customer", mirror or unittest.mock.Mock()),
             patch.object(storefront.auth, "log_event"),
+            patch.dict(os.environ, {"PUBLIC_APP_URL": "https://shop.example"}),
         ):
-            with patch.dict(os.environ, {"PUBLIC_APP_URL": "https://shop.example"}):
-                response = asyncio.run(
-                    storefront.login_otp_verify(
-                        request(),
-                        device_id="device-1",
-                        pre_auth_session_id="preauth-1",
-                        code="123456",
-                        device="Desktop Web",
-                    )
+            return asyncio.run(
+                storefront.login_otp_verify(
+                    request(),
+                    device_id="device-1",
+                    pre_auth_session_id="preauth-1",
+                    code="123456",
+                    device="Desktop Web",
                 )
+            )
+
+    def _pending_signup(self, **overrides):
+        details = {
+            "first_name": "Priya", "last_name": "Sharma", "email": "new@example.com",
+            "phone": "+919812345678", "signup_city": "Pune", "signup_state": "Maharashtra",
+            "signup_region": "West", "gender": "F", "age_bracket": "25-34",
+            "acquisition_channel": "Referral", "email_opt_in": True, "sms_opt_in": False,
+            "accepted_terms_at": "2026-07-01T10:00:00",
+        }
+        details.update(overrides)
+        con = open_test_db(self.database)
+        storefront.ensure_auth_tables(con)
+        con.execute(
+            "INSERT INTO pending_signups (device_id, payload, created_at) VALUES (?, ?, ?)",
+            ("device-1", json.dumps(details), __import__("time").time()),
+        )
+        con.commit()
+        con.close()
+
+    def test_verified_signup_creates_customer_dimension_and_pii(self):
+        self._pending_signup()
+        mirror = unittest.mock.Mock()
+        response = self._verify(self._consumed(), mirror)
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(json.loads(response.body)["redirect_url"], "/")
-        mirrored_customer = mirror_customer.call_args.args[0]
-        self.assertTrue(
-            {
-                "acquisition_campaign",
-                "age_bracket",
-                "home_address_line1",
-                "home_address_line2",
-                "home_country",
-                "home_postal_code",
-                "prime_start_date",
-                "signup_city",
-                "signup_region",
-                "signup_state",
-            }.issubset(mirrored_customer)
-        )
         cookie = response.headers["set-cookie"].lower()
         self.assertIn("sid=", cookie)
         self.assertIn("httponly", cookie)
         self.assertIn("secure", cookie)
         con = sqlite3.connect(self.database)
-        self.assertEqual(con.execute("SELECT COUNT(*) FROM customers").fetchone()[0], 1)
-        self.assertEqual(
-            con.execute("SELECT email FROM auth").fetchone()[0], "new@example.com"
-        )
+        con.row_factory = sqlite3.Row
+        customer = con.execute("SELECT * FROM customers").fetchone()
+        self.assertEqual(customer["signup_city"], "Pune")
+        self.assertEqual(customer["signup_region"], "West")
+        self.assertEqual(customer["gender"], "F")
+        self.assertEqual(customer["age_bracket"], "25-34")
+        self.assertEqual(customer["acquisition_channel"], "Referral")
+        self.assertEqual(customer["email_opt_in"], 1)
+        self.assertEqual(customer["terms_accepted_at"], "2026-07-01T10:00:00")
+        self.assertNotIn("first_name", customer.keys())  # no personal data in the dimension
+        pii = con.execute(
+            "SELECT * FROM customer_pii WHERE customer_id=?", (customer["customer_id"],)
+        ).fetchone()
+        self.assertEqual((pii["first_name"], pii["last_name"]), ("Priya", "Sharma"))
+        self.assertEqual(pii["email"], "new@example.com")
+        self.assertEqual(pii["phone"], "+919812345678")
+        self.assertEqual(con.execute("SELECT COUNT(*) FROM pending_signups").fetchone()[0], 0)
         self.assertEqual(
             con.execute("SELECT supertokens_user_id FROM supertokens_customers").fetchone()[0],
             "st-user-1",
@@ -689,17 +725,155 @@ class SuperTokensAuthenticationTests(unittest.TestCase):
             "st-session-handle",
         )
         con.close()
+        mirrored = mirror.call_args.args[0]
+        self.assertEqual(mirrored["signup_city"], "Pune")
+        self.assertFalse({"first_name", "last_name", "email", "phone"} & set(mirrored))
+
+    def test_verified_code_without_signup_for_unknown_contact_creates_nothing(self):
+        response = self._verify(self._consumed(email="stranger@example.com"))
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(json.loads(response.body)["code"], "account_not_found")
+        con = sqlite3.connect(self.database)
+        self.assertEqual(con.execute("SELECT COUNT(*) FROM customers").fetchone()[0], 0)
+        self.assertEqual(con.execute("SELECT COUNT(*) FROM supertokens_customers").fetchone()[0], 0)
+        self.assertEqual(con.execute("SELECT COUNT(*) FROM sessions").fetchone()[0], 0)
+        con.close()
+
+    def test_verified_signup_for_existing_contact_is_rejected(self):
+        self._pending_signup(email="user@example.com")
+        response = self._verify(self._consumed(email="user@example.com"))
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(json.loads(response.body)["code"], "account_exists")
+        con = sqlite3.connect(self.database)
+        self.assertEqual(con.execute("SELECT COUNT(*) FROM customers").fetchone()[0], 0)
+        con.close()
+
+    def test_verified_sign_in_links_existing_account(self):
+        response = self._verify(self._consumed(email="user@example.com"))
+        self.assertEqual(response.status_code, 200)
+        con = sqlite3.connect(self.database)
+        self.assertEqual(
+            con.execute("SELECT customer_id FROM supertokens_customers").fetchone()[0], "seed-email"
+        )
+        self.assertEqual(con.execute("SELECT COUNT(*) FROM customer_pii").fetchone()[0], 3)
+        con.close()
+
+    def test_sign_in_request_for_unknown_email_sends_no_code(self):
+        with patch.object(
+            storefront.passwordless_async, "create_code", new=AsyncMock()
+        ) as create_code:
+            response = asyncio.run(
+                storefront.login_otp_request(
+                    request(), identifier="nobody@example.com", device="Desktop Web"
+                )
+            )
+        self.assertEqual(response.status_code, 404)
+        payload = json.loads(response.body)
+        self.assertEqual(payload["code"], "account_not_found")
+        self.assertIn("Create an account", payload["message"])
+        create_code.assert_not_awaited()
+
+    def _signup_request(self, **fields):
+        form = {
+            "first_name": "Priya", "last_name": "Sharma", "email": "New@Example.com",
+            "phone": "9812345678", "city": "Pune", "gender": "F", "age_bracket": "25-34",
+            "heard_from": "Referral", "email_opt_in": "1", "accept_terms": "1",
+            "device": "Desktop Web",
+        }
+        form.update(fields)
+        form = {k: v for k, v in form.items() if v is not None}
+        result = SimpleNamespace(
+            device_id="device-9", pre_auth_session_id="preauth-9",
+            user_input_code="654321", code_life_time=300000,
+        )
+        client = TestClient(storefront.app)
+        with (
+            patch.object(storefront.auth, "db", side_effect=lambda: open_test_db(self.database)),
+            patch.object(
+                storefront.passwordless_async, "create_code", new=AsyncMock(return_value=result)
+            ) as create_code,
+            patch.object(storefront.passwordless_async, "send_email", new=AsyncMock()) as send_email,
+        ):
+            response = client.post("/signup/otp/request", data=form)
+        return response, create_code, send_email
+
+    def test_signup_request_saves_details_until_code_is_verified(self):
+        response, create_code, send_email = self._signup_request()
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertNotIn("654321", response.text)
+        create_code.assert_awaited_once_with(
+            tenant_id=storefront.TENANT_ID, email="new@example.com", phone_number=None
+        )
+        send_email.assert_awaited_once()
+        con = sqlite3.connect(self.database)
+        payload = json.loads(
+            con.execute("SELECT payload FROM pending_signups WHERE device_id='device-9'").fetchone()[0]
+        )
+        self.assertEqual(payload["signup_state"], "Maharashtra")
+        self.assertEqual(payload["phone"], "+919812345678")
+        self.assertTrue(payload["email_opt_in"])
+        self.assertFalse(payload["sms_opt_in"])
+        self.assertEqual(con.execute("SELECT COUNT(*) FROM customers").fetchone()[0], 0)
+        con.close()
+
+    def test_signup_with_existing_email_is_rejected_before_sending_a_code(self):
+        response, create_code, _ = self._signup_request(email="user@example.com")
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["code"], "account_exists")
+        self.assertIn("already exists", response.json()["message"])
+        create_code.assert_not_awaited()
+
+    def test_signup_with_existing_phone_is_rejected(self):
+        response, create_code, _ = self._signup_request(phone="+919876543210")
+        self.assertEqual(response.status_code, 409)
+        create_code.assert_not_awaited()
+
+    def test_signup_requires_name_city_and_terms(self):
+        response, create_code, _ = self._signup_request(first_name="", city="Atlantis", accept_terms=None)
+        self.assertEqual(response.status_code, 422)
+        message = response.json()["message"]
+        self.assertIn("first name", message)
+        self.assertIn("city", message)
+        self.assertIn("terms", message)
+        create_code.assert_not_awaited()
+
+    def test_migration_moves_legacy_personal_data_out_of_customers(self):
+        con = open_test_db(self.database)
+        con.execute(
+            """INSERT INTO customers (customer_id, signup_date, account_status)
+               VALUES ('legacy-1', '2025-01-01', 'active')"""
+        )
+        con.execute("INSERT INTO customer_pii (customer_id) VALUES ('placeholder')")
+        con.commit()
+        con.close()
+        legacy = sqlite3.connect(Path(self.tempdir.name) / "legacy.db")
+        legacy.executescript(
+            """CREATE TABLE customers (customer_id TEXT PRIMARY KEY, signup_date TEXT,
+                   account_status TEXT, first_name TEXT, phone TEXT, home_address_line1 TEXT);
+               INSERT INTO customers VALUES ('c1', '2025-01-01', 'active', 'Asha', '+919800000001', '12 MG Road');
+               CREATE TABLE auth (customer_id TEXT PRIMARY KEY, email TEXT UNIQUE, password TEXT);
+               INSERT INTO auth VALUES ('c1', 'Asha@Example.com', NULL);"""
+        )
+        storefront.ensure_customer_pii(legacy)
+        columns = {row[1] for row in legacy.execute("PRAGMA table_info(customers)")}
+        self.assertFalse({"first_name", "phone", "home_address_line1"} & columns)
+        row = legacy.execute(
+            "SELECT first_name, phone, home_address_line1, email FROM customer_pii WHERE customer_id='c1'"
+        ).fetchone()
+        self.assertEqual(row, ("Asha", "+919800000001", "12 MG Road", "asha@example.com"))
+        storefront.ensure_customer_pii(legacy)  # running again changes nothing
+        self.assertEqual(legacy.execute("SELECT COUNT(*) FROM customer_pii").fetchone()[0], 1)
+        legacy.close()
 
     def test_existing_email_maps_to_customer_without_duplicate_row(self):
         con = open_test_db(self.database)
         con.execute(
-            """INSERT INTO customers
-               (customer_id, signup_date, phone, first_name, account_status)
-               VALUES ('customer-1', '2025-01-01', '+919999999999', 'Existing', 'active')"""
+            """INSERT INTO customers (customer_id, signup_date, account_status)
+               VALUES ('customer-1', '2025-01-01', 'active')"""
         )
         con.execute(
-            "INSERT INTO auth (customer_id, email, password) VALUES (?, ?, NULL)",
-            ("customer-1", "existing@example.com"),
+            "INSERT INTO customer_pii (customer_id, first_name, email, phone) VALUES (?, ?, ?, ?)",
+            ("customer-1", "Existing", "existing@example.com", "+919999999999"),
         )
         con.execute(
             "INSERT INTO cart (customer_id, product_id, quantity, added_at) VALUES (?, ?, ?, ?)",
@@ -732,13 +906,12 @@ class SuperTokensAuthenticationTests(unittest.TestCase):
     def test_inactive_customer_account_cannot_be_linked(self):
         con = open_test_db(self.database)
         con.execute(
-            """INSERT INTO customers
-               (customer_id, signup_date, phone, first_name, account_status)
-               VALUES ('blocked-customer', '2025-01-01', NULL, 'Blocked', 'suspended')"""
+            """INSERT INTO customers (customer_id, signup_date, account_status)
+               VALUES ('blocked-customer', '2025-01-01', 'suspended')"""
         )
         con.execute(
-            "INSERT INTO auth (customer_id, email, password) VALUES (?, ?, NULL)",
-            ("blocked-customer", "blocked@example.com"),
+            "INSERT INTO customer_pii (customer_id, first_name, email) VALUES (?, ?, ?)",
+            ("blocked-customer", "Blocked", "blocked@example.com"),
         )
         with self.assertRaisesRegex(ValueError, "not active"):
             storefront._customer_for_verified_identity(
@@ -829,6 +1002,7 @@ class SuperTokensAuthenticationTests(unittest.TestCase):
         self.assertEqual(json.loads(response.body), {"status": "ok"})
 
     def test_healthcheck_rejects_a_missing_database_file(self):
+        self.database.unlink()
         original_db = storefront.DB
         storefront.DB = self.database
         try:
@@ -842,9 +1016,11 @@ class SuperTokensAuthenticationTests(unittest.TestCase):
         con = open_test_db(self.database)
         storefront.ensure_auth_tables(con)
         con.execute(
-            """INSERT INTO customers
-               (customer_id, signup_date, first_name, account_status)
-               VALUES ('customer-1', '2025-01-01', 'Existing', 'active')"""
+            """INSERT INTO customers (customer_id, signup_date, account_status)
+               VALUES ('customer-1', '2025-01-01', 'active')"""
+        )
+        con.execute(
+            "INSERT INTO customer_pii (customer_id, first_name) VALUES ('customer-1', 'Existing')"
         )
         con.execute(
             """INSERT INTO supertokens_customers
@@ -882,9 +1058,11 @@ class SuperTokensAuthenticationTests(unittest.TestCase):
         con = open_test_db(self.database)
         storefront.ensure_auth_tables(con)
         con.execute(
-            """INSERT INTO customers
-               (customer_id, signup_date, first_name, account_status)
-               VALUES ('customer-1', '2025-01-01', 'Existing', 'active')"""
+            """INSERT INTO customers (customer_id, signup_date, account_status)
+               VALUES ('customer-1', '2025-01-01', 'active')"""
+        )
+        con.execute(
+            "INSERT INTO customer_pii (customer_id, first_name) VALUES ('customer-1', 'Existing')"
         )
         con.execute(
             """INSERT INTO supertokens_customers

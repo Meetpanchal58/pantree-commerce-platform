@@ -24,6 +24,7 @@ from webapp.core import (
     _warm_recommendation_worker,
     db,
     ensure_auth_tables,
+    ensure_customer_pii,
     initialize_supertokens,
     logger,
     os,
@@ -82,7 +83,7 @@ def healthcheck():
         }
     finally:
         con.close()
-    required_tables = {"customers", "auth", "cart", "orders", "transactions"}
+    required_tables = {"customers", "cart", "orders", "transactions"}
     if not required_tables.issubset(tables):
         return JSONResponse({"status": "not_ready"}, status_code=503)
     return JSONResponse({"status": "ok"})
@@ -122,6 +123,7 @@ async def protect_storefront_sessions(request: Request, call_next):
     if (
         path.startswith("/auth")
         or path.startswith("/login")
+        or path.startswith("/signup")
         or path.startswith("/static/")
     ):
         return await call_next(request)
@@ -189,6 +191,7 @@ from webapp.routes.auth import (
     login_otp_verify,
     login_page,
     logout,
+    signup_otp_request,
 )
 from webapp.routes.catalog import browse, pdp, plp, search
 from webapp.routes.commerce import (

@@ -80,8 +80,15 @@ def main():
     CREATE TABLE IF NOT EXISTS sessions (
         session_id TEXT PRIMARY KEY, customer_id TEXT, device_type TEXT, created_at TEXT
     );
-    CREATE TABLE IF NOT EXISTS auth (
-        customer_id TEXT PRIMARY KEY, email TEXT UNIQUE, password TEXT
+    CREATE TABLE IF NOT EXISTS customer_pii (
+        customer_id TEXT PRIMARY KEY, first_name TEXT, last_name TEXT,
+        email TEXT UNIQUE, phone TEXT UNIQUE,
+        home_address_line1 TEXT, home_address_line2 TEXT,
+        home_postal_code TEXT, home_country TEXT,
+        created_at TEXT, updated_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS pending_signups (
+        device_id TEXT PRIMARY KEY, payload TEXT NOT NULL, created_at REAL NOT NULL
     );
     CREATE INDEX IF NOT EXISTS ix_click_cust ON clickstream(customer_id);
     CREATE INDEX IF NOT EXISTS ix_click_session ON clickstream(session_id);

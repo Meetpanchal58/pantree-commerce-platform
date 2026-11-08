@@ -27,7 +27,9 @@ from ..core import (
     delivery_channel_configured,
     ensure_auth_tables,
     get_session,
+    GEO,
     httpx,
+    json,
     log_event,
     logger,
     mirror_customer,
@@ -38,6 +40,7 @@ from ..core import (
     reserve_otp_request,
     session_async,
     sqlite3,
+    time,
     tpl,
     uid,
     urlsplit,
@@ -55,40 +58,82 @@ def login_page(request: Request, msg: str = ""):
             "msg": msg,
             "email_enabled": delivery_channel_configured("email"),
             "phone_enabled": delivery_channel_configured("phone"),
+            "cities": CITY_CHOICES,
+            "genders": GENDER_CHOICES,
+            "age_brackets": AGE_BRACKETS,
+            "heard_from_choices": HEARD_FROM_CHOICES,
         },
     )
 
 
-@router.post("/login/otp/request")
-async def login_otp_request(
-    request: Request,
-    identifier: str = Form(...),
-    device: str = Form("Desktop Web"),
-):
-    con = db()
-    try:
-        channel, normalized = _normalize_login_identifier(identifier)
-    except ValueError as exc:
-        con.close()
-        return JSONResponse({"ok": False, "message": str(exc)}, status_code=422)
-    allowed_devices = {"Desktop Web", "Android App", "iOS App", "Mobile Web"}
-    if device not in allowed_devices:
-        con.close()
-        return JSONResponse(
-            {"ok": False, "message": "Choose a valid device type."}, status_code=422
-        )
-    if not delivery_channel_configured(channel):
-        con.close()
-        if channel == "phone" and delivery_channel_configured("email"):
-            message = "Phone sign-in is unavailable here. Please use your email address."
-        else:
-            missing_provider = "SMTP" if channel == "email" else "OpenSMS"
-            message = f"{missing_provider} delivery is not configured for this sign-in method."
-        return JSONResponse(
-            {"ok": False, "message": message},
-            status_code=503,
-        )
+ALLOWED_DEVICES = {"Desktop Web", "Android App", "iOS App", "Mobile Web"}
+PENDING_SIGNUP_TTL_SECONDS = 30 * 60
 
+# Sign-up form choices. Values match the generated warehouse so real and
+# simulated customers can be analysed together.
+GENDER_CHOICES = {"F": "Female", "M": "Male", "Other": "Other", "Prefer not to say": "Prefer not to say"}
+AGE_BRACKETS = ["18-24", "25-34", "35-44", "45-54", "55+"]
+HEARD_FROM_CHOICES = {
+    "Organic": "Search engine (Google, Bing…)",
+    "Social Ads": "Social media",
+    "Referral": "A friend or family member",
+    "Paid Search": "An online ad",
+    "Email/CRM": "Email or newsletter",
+    "Direct": "I typed the website address",
+    "Other": "Other",
+}
+CITY_CHOICES = {
+    city: (state, region)
+    for region, states in GEO.items()
+    for state, cities in states.items()
+    for city in cities
+}
+
+
+class AccountNotFoundError(ValueError):
+    """Sign-in for a contact that has no Pantree account."""
+
+
+class AccountExistsError(ValueError):
+    """Sign-up for a contact that already has a Pantree account."""
+
+
+def _customers_with_contact(con, email=None, phone=None) -> set[str]:
+    """Customer IDs whose stored email or phone matches (normalised)."""
+    matches = set()
+    if email:
+        row = con.execute(
+            "SELECT customer_id FROM customer_pii WHERE lower(email)=?", (email.strip().lower(),)
+        ).fetchone()
+        if row:
+            matches.add(row[0])
+    if phone:
+        for customer_id, stored in con.execute(
+            "SELECT customer_id, phone FROM customer_pii WHERE phone IS NOT NULL"
+        ).fetchall():
+            try:
+                if _normalize_login_identifier(stored)[1] == phone:
+                    matches.add(customer_id)
+            except ValueError:
+                continue
+    return matches
+
+
+def _channel_unavailable(channel):
+    if channel == "phone" and delivery_channel_configured("email"):
+        message = "Phone sign-in is unavailable here. Please use your email address."
+    else:
+        missing_provider = "SMTP" if channel == "email" else "OpenSMS"
+        message = f"{missing_provider} delivery is not configured for this sign-in method."
+    return JSONResponse({"ok": False, "message": message}, status_code=503)
+
+
+async def _send_code(request, con, channel, normalized, precheck=None, after_create=None):
+    """Rate-limit, run the account check, create a SuperTokens code and deliver it.
+
+    The rate limit runs before the account check, so probing which emails have
+    accounts is throttled like any other code request.
+    """
     try:
         wait = reserve_otp_request(
             con,
@@ -104,12 +149,18 @@ async def login_otp_request(
                 status_code=429,
                 headers={"Retry-After": str(wait)},
             )
+        if precheck is not None:
+            rejection = precheck()
+            if rejection is not None:
+                return rejection
         result = await passwordless_async.create_code(
             tenant_id=TENANT_ID,
             email=normalized if channel == "email" else None,
             phone_number=normalized if channel == "phone" else None,
         )
         await _deliver_passwordless_code(channel, normalized, result)
+        if after_create is not None:
+            after_create(result)
     except (
         SuperTokensError,
         OSError,
@@ -137,8 +188,6 @@ async def login_otp_request(
             },
             status_code=503,
         )
-    finally:
-        con.close()
 
     return JSONResponse(
         {
@@ -150,6 +199,182 @@ async def login_otp_request(
             "expires_in": max(1, int(result.code_life_time / 1000)),
         }
     )
+
+
+@router.post("/login/otp/request")
+async def login_otp_request(
+    request: Request,
+    identifier: str = Form(...),
+    device: str = Form("Desktop Web"),
+):
+    """Send a sign-in code to an existing account. Never creates accounts."""
+    try:
+        channel, normalized = _normalize_login_identifier(identifier)
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "message": str(exc)}, status_code=422)
+    if device not in ALLOWED_DEVICES:
+        return JSONResponse(
+            {"ok": False, "message": "Choose a valid device type."}, status_code=422
+        )
+    if not delivery_channel_configured(channel):
+        return _channel_unavailable(channel)
+
+    con = db()
+    try:
+        ensure_auth_tables(con)
+
+        def account_must_exist():
+            found = _customers_with_contact(
+                con,
+                email=normalized if channel == "email" else None,
+                phone=normalized if channel == "phone" else None,
+            )
+            if found:
+                return None
+            what = "email address" if channel == "email" else "mobile number"
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "code": "account_not_found",
+                    "message": f"No account found for this {what}. Create an account first.",
+                },
+                status_code=404,
+            )
+
+        return await _send_code(request, con, channel, normalized, precheck=account_must_exist)
+    finally:
+        con.close()
+
+
+def _validate_signup(form: dict) -> tuple[dict, list[str]]:
+    """Clean the sign-up form; return (details, errors)."""
+    errors = []
+    first_name = (form.get("first_name") or "").strip()
+    last_name = (form.get("last_name") or "").strip()
+    if not first_name or len(first_name) > 60:
+        errors.append("Enter your first name.")
+    if len(last_name) > 60:
+        errors.append("Last name is too long.")
+    email = None
+    try:
+        kind, email = _normalize_login_identifier(form.get("email") or "")
+        if kind != "email":
+            raise ValueError
+    except ValueError:
+        errors.append("Enter a valid email address.")
+        email = None
+    phone = None
+    if (form.get("phone") or "").strip():
+        try:
+            kind, phone = _normalize_login_identifier(form["phone"])
+            if kind != "phone":
+                raise ValueError
+        except ValueError:
+            errors.append("Enter a valid mobile number, or leave it empty.")
+            phone = None
+    city = form.get("city") or ""
+    if city not in CITY_CHOICES and city != "Other":
+        errors.append("Choose your city.")
+    gender = form.get("gender") or "Prefer not to say"
+    if gender not in GENDER_CHOICES:
+        errors.append("Choose a valid gender option.")
+    age_bracket = form.get("age_bracket") or None
+    if age_bracket and age_bracket not in AGE_BRACKETS:
+        errors.append("Choose a valid age range.")
+    heard_from = form.get("heard_from") or None
+    if heard_from and heard_from not in HEARD_FROM_CHOICES:
+        errors.append("Choose a valid option for how you heard about us.")
+    if not form.get("accept_terms"):
+        errors.append("Please accept the terms and privacy policy.")
+    state, region = CITY_CHOICES.get(city, (None, None))
+    details = {
+        "first_name": first_name,
+        "last_name": last_name,
+        "email": email,
+        "phone": phone,
+        "signup_city": city,
+        "signup_state": state,
+        "signup_region": region,
+        "gender": gender,
+        "age_bracket": age_bracket,
+        "acquisition_channel": heard_from or "Unknown",
+        "email_opt_in": bool(form.get("email_opt_in")),
+        "sms_opt_in": bool(form.get("sms_opt_in")),
+    }
+    return details, errors
+
+
+@router.post("/signup/otp/request")
+async def signup_otp_request(request: Request):
+    """Start sign-up: validate details, reject existing contacts, send a code.
+
+    Details are kept server-side in pending_signups until the code is verified;
+    only then are the customer rows created.
+    """
+    form = await request.form()
+    details, errors = _validate_signup(dict(form))
+    device = form.get("device") or "Desktop Web"
+    if device not in ALLOWED_DEVICES:
+        errors.append("Choose a valid device type.")
+    if errors:
+        return JSONResponse({"ok": False, "message": " ".join(errors), "errors": errors}, status_code=422)
+
+    # Verify the email when email delivery works; otherwise the mobile number.
+    if delivery_channel_configured("email"):
+        channel, normalized = "email", details["email"]
+    elif delivery_channel_configured("phone") and details["phone"]:
+        channel, normalized = "phone", details["phone"]
+    elif delivery_channel_configured("phone"):
+        return JSONResponse(
+            {"ok": False, "message": "Enter your mobile number so we can send a code."},
+            status_code=422,
+        )
+    else:
+        return _channel_unavailable("email")
+
+    con = db()
+    try:
+        ensure_auth_tables(con)
+        con.execute(
+            "DELETE FROM pending_signups WHERE created_at < ?",
+            (time.time() - PENDING_SIGNUP_TTL_SECONDS,),
+        )
+        con.commit()
+
+        def contact_must_be_new():
+            if _customers_with_contact(con, email=details["email"]):
+                return JSONResponse(
+                    {
+                        "ok": False,
+                        "code": "account_exists",
+                        "message": "An account with this email already exists. Please sign in instead.",
+                    },
+                    status_code=409,
+                )
+            if details["phone"] and _customers_with_contact(con, phone=details["phone"]):
+                return JSONResponse(
+                    {
+                        "ok": False,
+                        "code": "account_exists",
+                        "message": "An account with this mobile number already exists. Please sign in instead.",
+                    },
+                    status_code=409,
+                )
+            return None
+
+        def remember_signup(result):
+            con.execute(
+                "INSERT OR REPLACE INTO pending_signups (device_id, payload, created_at) VALUES (?, ?, ?)",
+                (result.device_id, json.dumps({**details, "accepted_terms_at": now()}), time.time()),
+            )
+            con.commit()
+
+        return await _send_code(
+            request, con, channel, normalized,
+            precheck=contact_must_be_new, after_create=remember_signup,
+        )
+    finally:
+        con.close()
 
 
 @router.post("/login/otp/resend")
@@ -239,109 +464,97 @@ async def login_otp_resend(
     )
 
 
-def _customer_for_verified_identity(con, user_id, email, phone):
+def _customer_for_verified_identity(con, user_id, email, phone, signup=None):
+    """Return the customer for a verified SuperTokens identity.
+
+    * Sign-in (``signup`` is None): the verified email/phone must belong to an
+      existing account, otherwise AccountNotFoundError. Nothing is created.
+    * Sign-up (``signup`` holds the form details): the contact must still be
+      unused, otherwise AccountExistsError; then the customer dimension row
+      and the customer_pii row are created together.
+    """
     ensure_auth_tables(con)
     mapped = con.execute(
         "SELECT customer_id FROM supertokens_customers WHERE supertokens_user_id=?",
         (user_id,),
     ).fetchone()
-    if mapped:
-        return mapped["customer_id"]
-
     normalized_email = email.strip().lower() if email else None
     normalized_phone = _normalize_login_identifier(phone)[1] if phone else None
-    matches = set()
-    rows = con.execute("""SELECT a.customer_id, a.email, c.phone FROM auth a
-           JOIN customers c USING(customer_id)""").fetchall()
-    for row in rows:
-        if (
-            normalized_email
-            and row["email"]
-            and row["email"].strip().lower() == normalized_email
-        ):
-            matches.add(row["customer_id"])
-        if normalized_phone and row["phone"]:
-            try:
-                existing_phone = _normalize_login_identifier(row["phone"])[1]
-            except ValueError:
-                continue
-            if existing_phone == normalized_phone:
-                matches.add(row["customer_id"])
-    if len(matches) > 1:
-        raise ValueError(
-            "This verified contact matches more than one Pantree customer record."
-        )
+    if mapped and signup is None:
+        return mapped[0]
 
-    customer_id = next(iter(matches), None)
-    if customer_id is not None:
+    matches = _customers_with_contact(con, email=normalized_email, phone=normalized_phone)
+    if len(matches) > 1:
+        raise ValueError("This verified contact matches more than one Pantree customer record.")
+    customer_id = next(iter(matches), None) or (mapped[0] if mapped else None)
+
+    if signup is not None:
+        if customer_id is not None:
+            raise AccountExistsError("An account with this contact already exists.")
+        if normalized_email and signup.get("email") not in (None, normalized_email):
+            raise ValueError("The verified email does not match the sign-up form.")
+        customer_id = uid("cust")
+        created = now()
+        dim_row = {
+            "customer_id": customer_id,
+            "signup_date": created[:10],
+            "signup_city": signup.get("signup_city"),
+            "signup_state": signup.get("signup_state"),
+            "signup_region": signup.get("signup_region"),
+            "acquisition_channel": signup.get("acquisition_channel") or "Unknown",
+            "acquisition_campaign": "website_signup",
+            "age_bracket": signup.get("age_bracket"),
+            "gender": signup.get("gender") or "Prefer not to say",
+            "is_prime_member": 0,
+            "prime_start_date": None,
+            "prime_tier": "Non-Prime",
+            "email_opt_in": int(bool(signup.get("email_opt_in"))),
+            "sms_opt_in": int(bool(signup.get("sms_opt_in"))),
+            "account_status": "active",
+            "terms_accepted_at": signup.get("accepted_terms_at") or created,
+        }
+        existing_columns = {row[1] for row in con.execute("PRAGMA table_info(customers)")}
+        columns = [c for c in dim_row if c in existing_columns]
+        con.execute(
+            f"INSERT INTO customers ({', '.join(columns)}) VALUES ({', '.join('?' for _ in columns)})",
+            [dim_row[c] for c in columns],
+        )
+        con.execute(
+            """INSERT INTO customer_pii
+               (customer_id, first_name, last_name, email, phone, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                customer_id,
+                signup.get("first_name"),
+                signup.get("last_name") or None,
+                normalized_email or signup.get("email"),
+                normalized_phone or signup.get("phone"),
+                created,
+                created,
+            ),
+        )
+        mirror_customer(dim_row)
+    else:
+        if customer_id is None:
+            raise AccountNotFoundError("No account found for this contact.")
         account = con.execute(
             "SELECT account_status FROM customers WHERE customer_id=?",
             (customer_id,),
         ).fetchone()
-        if account and account["account_status"] not in (None, "active"):
+        if account and account[0] not in (None, "active"):
             raise ValueError("This Pantree account is not active.")
-    if customer_id is None:
-        customer_id = uid("cust")
-        created = now()
-        con.execute(
-            """INSERT INTO customers
-               (customer_id, signup_date, acquisition_channel, gender,
-                is_prime_member, prime_tier, email_opt_in, sms_opt_in,
-                account_status, first_name, last_name, phone)
-               VALUES (?, ?, 'Passwordless', 'Prefer not to say', 0,
-                       'Non-Prime', 0, 0, 'active', 'Customer', '', ?)""",
-            (customer_id, created[:10], normalized_phone),
-        )
-        mirror_customer(
-            {
-                "customer_id": customer_id,
-                "signup_date": created[:10],
-                "acquisition_channel": "Passwordless",
-                "acquisition_campaign": None,
-                "gender": "Prefer not to say",
-                "age_bracket": None,
-                "is_prime_member": 0,
-                "prime_tier": "Non-Prime",
-                "prime_start_date": None,
-                "email_opt_in": 0,
-                "sms_opt_in": 0,
-                "account_status": "active",
-                "first_name": "Customer",
-                "last_name": "",
-                "phone": normalized_phone,
-                "signup_city": None,
-                "signup_region": None,
-                "signup_state": None,
-                "home_address_line1": None,
-                "home_address_line2": None,
-                "home_postal_code": None,
-                "home_country": None,
-            }
-        )
+        if normalized_phone:
+            con.execute(
+                "UPDATE customer_pii SET phone=? WHERE customer_id=? AND phone IS NULL",
+                (normalized_phone, customer_id),
+            )
 
-    auth_row = con.execute(
-        "SELECT email FROM auth WHERE customer_id=?", (customer_id,)
-    ).fetchone()
-    if auth_row is None:
+    if not mapped:
         con.execute(
-            "INSERT INTO auth (customer_id, email, password) VALUES (?, ?, NULL)",
-            (customer_id, normalized_email),
+            """INSERT INTO supertokens_customers
+               (supertokens_user_id, customer_id, created_at) VALUES (?, ?, ?)""",
+            (user_id, customer_id, now()),
         )
-    elif normalized_email and not auth_row["email"]:
-        con.execute(
-            "UPDATE auth SET email=? WHERE customer_id=?",
-            (normalized_email, customer_id),
-        )
-    if normalized_phone:
-        con.execute(
-            "UPDATE customers SET phone=? WHERE customer_id=? AND COALESCE(phone,'')=''",
-            (normalized_phone, customer_id),
-        )
-    con.execute(
-        """INSERT INTO supertokens_customers
-           (supertokens_user_id, customer_id, created_at) VALUES (?, ?, ?)""",
-        (user_id, customer_id, now()),
-    )
     return customer_id
 
 
@@ -400,11 +613,19 @@ async def login_otp_verify(
     con = db()
     try:
         ensure_auth_tables(con)
+        pending = con.execute(
+            "SELECT payload, created_at FROM pending_signups WHERE device_id=?", (device_id,)
+        ).fetchone()
+        signup = None
+        if pending and time.time() - float(pending[1]) <= PENDING_SIGNUP_TTL_SECONDS:
+            signup = json.loads(pending[0])
+        con.execute("DELETE FROM pending_signups WHERE device_id=?", (device_id,))
         customer_id = _customer_for_verified_identity(
             con,
             consumed.user.id,
             consumed.consumed_device.email,
             consumed.consumed_device.phone_number,
+            signup=signup,
         )
         con.commit()
         auth_session = await session_async.create_new_session(
@@ -422,6 +643,26 @@ async def login_otp_verify(
         )
         log_event(con, customer_id, sid, device, "app_open", "home")
         con.commit()
+    except AccountNotFoundError:
+        con.rollback()
+        return JSONResponse(
+            {
+                "ok": False,
+                "code": "account_not_found",
+                "message": "No account found for this contact. Create an account first.",
+            },
+            status_code=404,
+        )
+    except AccountExistsError:
+        con.rollback()
+        return JSONResponse(
+            {
+                "ok": False,
+                "code": "account_exists",
+                "message": "An account with this contact already exists. Please sign in instead.",
+            },
+            status_code=409,
+        )
     except (SuperTokensError, ValueError, sqlite3.IntegrityError) as exc:
         con.rollback()
         logger.error(
@@ -474,7 +715,9 @@ def account_page(request: Request, sid: str = Cookie(None)):
         con.close()
         return RedirectResponse("/login", status_code=303)
     customer = con.execute(
-        "SELECT c.*, a.email FROM customers c JOIN auth a USING(customer_id) WHERE c.customer_id=?",
+        """SELECT c.*, p.first_name, p.last_name, p.email, p.phone, p.home_address_line1,
+                  p.home_address_line2, p.home_postal_code, p.home_country
+           FROM customers c LEFT JOIN customer_pii p USING(customer_id) WHERE c.customer_id=?""",
         (s["customer_id"],),
     ).fetchone()
     orders = con.execute(
