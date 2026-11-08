@@ -11,6 +11,7 @@ from collections import defaultdict
 import numpy as np
 import pandas as pd
 import config as C
+from taste import product_demand_multiplier, true_taste_score
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "data"; DATA.mkdir(exist_ok=True)
@@ -48,23 +49,6 @@ def season_info(ts):
     if month in (4,5,6): base *= 1.08
     if month in (10,11,12): base *= 1.10
     return base * fm, festival
-
-
-def product_demand_multiplier(row, ts):
-    m = pd.Timestamp(ts).month
-    art = str(row.h3_category)
-    usage = str(row.usage)
-    mult = 1.0
-    if m in (4,5,6):
-        if art in {"Tshirts","Tops","Dresses","Sandals","Flip Flops","Sunglasses"}: mult *= 1.35
-        if art in {"Jackets","Sweaters","Sweatshirts"}: mult *= 0.75
-    if m in (10,11):
-        if usage == "Ethnic" or art in {"Kurtas","Kurtis","Sarees","Earrings","Handbags","Watches"}: mult *= 1.35
-        if art in {"Tshirts","Track Pants"}: mult *= 1.05
-    if m in (12,1,2):
-        if art in {"Jackets","Sweaters","Sweatshirts","Boots"}: mult *= 1.35
-    if usage == "Sports" and m in (1,2,3,4,5): mult *= 1.10
-    return mult
 
 
 def build_products(r, n):
@@ -171,16 +155,7 @@ def product_weights(products, profile, ts, history_counts=None, candidate_idx=No
     else:
         idx = np.asarray(candidate_idx, dtype=np.int64)
         x = products.iloc[idx]
-    score = np.ones(len(x), dtype=float)
-    score *= np.clip((x.avg_rating.fillna(4.0).to_numpy() / 4.0) ** 1.2, .45, 1.5)
-    score *= np.array([product_demand_multiplier(row, ts) for row in x.itertuples(index=False)])
-    score *= np.where(x.h1_category.to_numpy() == profile.category_focus, 2.8, .55)
-    score *= np.where(x.h4_colour.to_numpy() == profile.colour_focus, 1.6, .85)
-    score *= np.where(x.usage.to_numpy() == profile.preferred_usage, 1.45, .85)
-    price = x.current_price.to_numpy(dtype=float)
-    med = float(np.median(price)) if len(price) else 1.0
-    ps = float(profile.price_sensitivity)
-    score *= np.exp(-ps * np.clip((price / max(med, 1.0)) - 1, -.8, 4))
+    score = true_taste_score(profile, x, ts)
     if history_counts:
         score *= np.array([1 + min(history_counts.get(pid, 0), 5) * .08 for pid in x.product_id])
     score = np.nan_to_num(score, nan=1.0, posinf=1e6)

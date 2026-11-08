@@ -152,3 +152,64 @@ class SegmentAwarePolicyTests(unittest.TestCase):
     def test_returning_buyer_keeps_personal_sources_only(self):
         names, _ = self._captured_sources({"purchased_product_ids": ["p1"]})
         self.assertNotIn("trending", names)
+
+
+class OracleTests(unittest.TestCase):
+    def _fixture(self):
+        from recommendations.evaluate import oracle_scores
+
+        catalog = pd.DataFrame(
+            [
+                ("match", "Apparel", "Tshirts", "Black", "Casual", 4.5, 800.0),
+                ("half", "Apparel", "Jeans", "Blue", "Casual", 4.0, 1200.0),
+                ("miss", "Footwear", "Heels", "Red", "Formal", 3.5, 4000.0),
+                ("miss2", "Accessories", "Watches", "Red", "Formal", 3.0, 9000.0),
+            ],
+            columns=["product_id", "h1_category", "h3_category", "h4_colour", "usage", "avg_rating", "current_price"],
+        ).set_index("product_id", drop=False)
+        profiles = pd.DataFrame(
+            [{"customer_id": "c1", "category_focus": "Apparel", "colour_focus": "Black",
+              "preferred_usage": "Casual", "price_sensitivity": 0.8}]
+        ).set_index("customer_id")
+        frame = pd.DataFrame({
+            "session_id": "order-1", "customer_id": "c1",
+            "event_timestamp": pd.Timestamp("2026-03-01 12:00"),
+            "product_id": ["miss2", "miss", "half", "match"], "label": [0, 0, 0, 1],
+        })
+        frame["oracle"] = oracle_scores(frame, profiles, catalog, float(catalog["current_price"].median()))
+        return frame, profiles, catalog
+
+    def test_oracle_ranks_the_true_favourite_first_and_beats_random(self):
+        frame, _, _ = self._fixture()
+        ordered = frame.sort_values("oracle", ascending=False)
+        self.assertEqual(ordered["product_id"].iloc[0], "match")
+        oracle_ndcg = session_metrics(ordered["label"].to_numpy(), k=10)[1]
+        random_ndcg = session_metrics(frame["label"].to_numpy(), k=10)[1]  # bought item last
+        self.assertGreaterEqual(oracle_ndcg, random_ndcg)
+        self.assertEqual(oracle_ndcg, 1.0)
+
+    def test_true_taste_score_is_deterministic(self):
+        from generators.taste import true_taste_score
+
+        _, profiles, catalog = self._fixture()
+        first = true_taste_score(profiles.loc["c1"], catalog, pd.Timestamp("2026-10-15"))
+        again = true_taste_score(profiles.loc["c1"], catalog, pd.Timestamp("2026-10-15"))
+        np.testing.assert_array_equal(first, again)
+        # Precomputed seasonal demand gives the identical result.
+        from generators.taste import product_demand_multiplier
+        demand = np.array([product_demand_multiplier(r, pd.Timestamp("2026-10-15")) for r in catalog.itertuples(index=False)])
+        np.testing.assert_array_equal(first, true_taste_score(profiles.loc["c1"], catalog, pd.Timestamp("2026-10-15"), demand=demand))
+
+    def test_gap_closed_is_zero_for_random_and_one_for_oracle(self):
+        from recommendations.evaluate import gap_closed_bootstrap
+
+        rng = np.random.default_rng(1)
+        random = rng.uniform(0.0, 0.1, 300)
+        oracle = random + rng.uniform(0.2, 0.4, 300)
+        model = random + 0.5 * (oracle - random)
+        self.assertAlmostEqual(gap_closed_bootstrap(random, random, oracle)["value"], 0.0)
+        self.assertAlmostEqual(gap_closed_bootstrap(oracle, random, oracle)["value"], 1.0)
+        half = gap_closed_bootstrap(model, random, oracle)
+        self.assertAlmostEqual(half["value"], 0.5)
+        self.assertLess(half["ci_low"], 0.5 + 1e-9)
+        self.assertGreater(half["ci_high"], 0.5 - 1e-9)
