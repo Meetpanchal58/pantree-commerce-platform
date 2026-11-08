@@ -199,7 +199,7 @@ and marketing-mix projects.
 ### What is in the generated practice data?
 
 | Table or files | In everyday language |
-|---|---|---|
+|---|---|
 | `customer_master`, `product_master`, `seller_master`, `agent_master` | Basic details about shoppers, products, sellers, and support staff. |
 | `orders`, `transactions` | Orders and the products inside each order. |
 | `clickstream` | The generated activity diary: visits, searches, product views, carts, and purchases. |
