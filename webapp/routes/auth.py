@@ -48,7 +48,15 @@ router = APIRouter()
 
 @router.get("/login", response_class=HTMLResponse)
 def login_page(request: Request, msg: str = ""):
-    return tpl.TemplateResponse(request, "login.html", {"msg": msg})
+    return tpl.TemplateResponse(
+        request,
+        "login.html",
+        {
+            "msg": msg,
+            "email_enabled": delivery_channel_configured("email"),
+            "phone_enabled": delivery_channel_configured("phone"),
+        },
+    )
 
 
 @router.post("/login/otp/request")
@@ -71,12 +79,13 @@ async def login_otp_request(
         )
     if not delivery_channel_configured(channel):
         con.close()
-        missing_provider = "SMTP" if channel == "email" else "OpenSMS"
+        if channel == "phone" and delivery_channel_configured("email"):
+            message = "Phone sign-in is unavailable here. Please use your email address."
+        else:
+            missing_provider = "SMTP" if channel == "email" else "OpenSMS"
+            message = f"{missing_provider} delivery is not configured for this sign-in method."
         return JSONResponse(
-            {
-                "ok": False,
-                "message": f"{missing_provider} delivery is not configured for this sign-in method.",
-            },
+            {"ok": False, "message": message},
             status_code=503,
         )
 
@@ -136,6 +145,7 @@ async def login_otp_request(
             "ok": True,
             "device_id": result.device_id,
             "pre_auth_session_id": result.pre_auth_session_id,
+            "channel": channel,
             "message": "A sign-in code was sent if the delivery provider accepted the request.",
             "expires_in": max(1, int(result.code_life_time / 1000)),
         }
