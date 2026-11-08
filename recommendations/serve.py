@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from functools import lru_cache
 import time
 from typing import Any
@@ -449,8 +450,23 @@ def warm_recommendation_caches() -> None:
     popularity.warm_popularity()
     popularity.warm_activity_cache()
     popularity.get_popular(100)
+    if not heavy_models_enabled():
+        logger.info(
+            "Skipping collaborative and content models (PANTREE_HEAVY_RECOMMENDATIONS=0)"
+        )
+        return
     collaborative.warm_model()
     content.warm_index()
+
+
+def heavy_models_enabled() -> bool:
+    """Whether to load the memory-hungry ALS and sentence-transformer models.
+
+    Set PANTREE_HEAVY_RECOMMENDATIONS=0 on small hosts (e.g. a 512 MB instance);
+    recommendations then fall back to popularity, frequently-bought-together,
+    and similar-category results.
+    """
+    return os.getenv("PANTREE_HEAVY_RECOMMENDATIONS", "1").strip() != "0"
 
 
 def warm_homepage_caches() -> None:
