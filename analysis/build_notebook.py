@@ -48,13 +48,17 @@ plt.rcParams.update({
     "lines.linewidth": 2, "font.size": 9,
 })
 
-def hbar(series, title, fmt="{:.1%}", color=SERIES[0]):
-    s = series.sort_values()
+from matplotlib.ticker import PercentFormatter
+
+def hbar(series, title, fmt="{:.1%}", color=SERIES[0], sort=True):
+    s = series.sort_values() if sort else series
     fig, ax = plt.subplots(figsize=(9, 0.38 * len(s) + 0.9))
     ax.barh(s.index.astype(str), s.values, color=color, height=0.62)
     for y, v in enumerate(s.values):
         ax.text(v, y, "  " + fmt.format(v), va="center", color=INK, fontsize=8.5)
     ax.set_title(title); ax.grid(axis="y", visible=False); ax.margins(x=0.12)
+    if "%" in fmt:
+        ax.xaxis.set_major_formatter(PercentFormatter(1.0, decimals=0))
     plt.tight_layout(); plt.show()
 
 tx = read("transactions"); tx["order_timestamp"] = pd.to_datetime(tx["order_timestamp"])
@@ -78,6 +82,7 @@ print(f"Average order value: ₹{realized['realized_revenue'].mean():,.0f}")
 md("""
 ## 2. Sales over time
 Monthly realized revenue. Shaded months are festival and sale periods configured in the simulator.
+Note the steady growth: new customers join every month, so later months are naturally larger.
 """)
 code("""
 monthly = realized.set_index("order_timestamp")["realized_revenue"].resample("MS").sum()
@@ -92,9 +97,12 @@ ax.set_title("Monthly realized revenue (₹ lakh)"); ax.set_ylabel("₹ lakh")
 plt.tight_layout(); plt.show()
 best = monthly.idxmax()
 print(f"Best month: {best:%b %Y} (₹{monthly.max()/1e5:.1f} lakh); weakest: {monthly.idxmin():%b %Y} (₹{monthly.min()/1e5:.1f} lakh)")
-festival = monthly[[m.strftime('%Y-%m') in C.FESTIVALS for m in monthly.index]].mean()
-normal = monthly[[m.strftime('%Y-%m') not in C.FESTIVALS for m in monthly.index]].mean()
-print(f"Festival months average {festival/normal - 1:+.0%} revenue vs other months")
+covered = sorted(m for m in C.FESTIVALS if m >= monthly.index.min().strftime("%Y-%m"))
+print(f"Festival calendar in generators/config.py covers: {', '.join(covered)}; last configured month {max(C.FESTIVALS)}")
+late = [m for m in monthly.index if m.strftime("%Y-%m") > max(C.FESTIVALS)]
+print(f"{len(late)} months after {max(C.FESTIVALS)} (including Oct-Nov 2025 Diwali) have no festival boost configured.")
+print("A raw festival vs non-festival comparison is therefore misleading: the shop also grows over time,")
+print("so early (festival-flagged) months look weaker. Extending the calendar is listed as a next step.")
 """)
 
 md("""
@@ -121,7 +129,7 @@ steps = ["session_start", "pdp_view", "add_to_cart", "checkout_start", "payment_
 reached = {s: cs.loc[cs.event_type.eq(s), "session_id"].nunique() for s in steps}
 total = reached["session_start"]
 funnel = pd.Series({s.replace("_", " "): reached[s] / total for s in steps})
-hbar(funnel.iloc[::-1], "Share of sessions reaching each step")
+hbar(funnel.iloc[::-1], "Share of sessions reaching each step", sort=False)
 print(f"Sessions: {total:,}; conversion to purchase: {reached['purchase']/total:.2%}")
 print(f"Cart → purchase: {reached['purchase']/reached['add_to_cart']:.1%}")
 """)
@@ -166,7 +174,7 @@ repeat = orders_per_buyer[orders_per_buyer >= 2].index
 share_repeat_rev = realized[realized.customer_id.isin(repeat)]["realized_revenue"].sum() / realized["realized_revenue"].sum()
 dist = orders_per_buyer.clip(upper=5).value_counts(normalize=True).sort_index()
 dist.index = [f"{i}" if i < 5 else "5+" for i in dist.index]
-hbar(dist.iloc[::-1], "Buyers by number of paid orders", color=SERIES[0])
+hbar(dist.iloc[::-1], "Buyers by number of paid orders", color=SERIES[0], sort=False)
 print(f"Repeat buyers: {len(repeat)/len(orders_per_buyer):.1%} of buyers, bringing {share_repeat_rev:.1%} of revenue")
 """)
 
