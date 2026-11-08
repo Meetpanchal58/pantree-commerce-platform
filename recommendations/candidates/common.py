@@ -119,3 +119,29 @@ def read_event_counts() -> tuple[pd.Series, pd.Series]:
 def event_counts_ready() -> bool:
     """Report whether clickstream ranking features are ready for request-time use."""
     return read_event_counts.cache_info().currsize > 0
+
+
+@lru_cache(maxsize=1)
+def customer_histories(limit: int = 200) -> dict[str, dict]:
+    """Per customer: products bought and products interacted with, newest first.
+
+    Mirrors how the evaluation builds a customer's profile (purchases first).
+    """
+    events = read_clickstream_activity().sort_values("event_timestamp", ascending=False)
+    viewed = {
+        customer_id: list(dict.fromkeys(group["product_id"].head(limit)))
+        for customer_id, group in events.groupby("customer_id", sort=False)
+    }
+    orders = read_realized_transactions().sort_values("order_timestamp", ascending=False)
+    bought = {
+        customer_id: list(dict.fromkeys(group["product_id"]))
+        for customer_id, group in orders.groupby("customer_id", sort=False)
+    }
+    return {
+        customer_id: {"bought": bought.get(customer_id, []), "viewed": viewed.get(customer_id, [])}
+        for customer_id in set(viewed) | set(bought)
+    }
+
+
+def customer_histories_ready() -> bool:
+    return customer_histories.cache_info().currsize > 0

@@ -535,7 +535,7 @@ to adjust the related-products heading.
 
 | Storefront row | Selection logic |
 |---|---|
-| **Recommended for you** (homepage) | Combines seeded implicit ALS candidates with products related to the customer's recent activity. Interaction strength is weighted (product view < cart addition < purchase); order activity is associated with browsing using a same-customer, same-day soft join. Recent signed-in views, cart additions, wishlists, and purchases from SQLite can immediately seed recommendations. The recent-activity source looks for in-stock candidates in the same product type and compatible audience, prioritizing recent category activity (or ratings/reviews when activity is absent), and may add discounted products related to those seeds. Already-purchased products are excluded. If there are no usable personalized candidates, the row falls back to recent popularity, then highly rated in-stock catalog products. The UI labels that fallback “Popular while we learn your taste.” |
+| **Recommended for you** (homepage) | Combines seeded implicit ALS candidates with products related to the customer's recent activity. Interaction strength is weighted (product view < cart addition < purchase); order activity is associated with browsing using a same-customer, same-day soft join. Recent signed-in views, cart additions, wishlists, and purchases from SQLite can immediately seed recommendations. The recent-activity source looks for in-stock candidates in the same product type and compatible audience, prioritizing recent category activity (or ratings/reviews when activity is absent), and may add discounted products related to those seeds. Already-purchased products are excluded. If there are no usable personalized candidates, the row falls back to recent popularity, then highly rated in-stock catalog products. The UI labels that fallback “Popular while we learn your taste.” Customers with no purchases yet see trending products first, because the evaluation showed popularity predicts first purchases best. |
 | **Frequently bought together** (product page) | Tries evidence in order: products that appeared in the same realized orders as the anchor; warehouse co-view/affinity pairs; curated complementary product-type pairings; then other highly rated products from the same department. It moves to the next source if the earlier source has no eligible results. Candidates must be active, in stock, a different product type from the anchor, and audience-compatible; the anchor and already-purchased products are removed. Duplicate items across the two displayed product-page rows are removed. The heading changes when results come solely from co-view, curated, or department-fallback evidence. |
 | **Similar products** (product page) | Searches a FAISS index of Sentence Transformer embeddings built from product name, description, and attributes. Results are filtered to the same product type and a compatible gender/audience (including universal categories), with inactive, out-of-stock, purchased, anchor, and duplicate-row products removed. If there are too few embedding matches, it fills from the same type/audience using rating, review count, and product ID as deterministic tie-breaks. |
 
@@ -573,31 +573,73 @@ python -m venv .venv
 ```
 
 The recommendation dependencies in `requirements.txt` support seeded implicit ALS,
-Sentence Transformers + FAISS, and a LightGBM ranker trained from sampled real clickstream
-sessions. The ranker is optional: until `recommendations/ranker.txt` exists and can be loaded,
-the service sorts by fused retrieval scores. A positive training label is a realized order for the
-same customer and product on the same calendar day, after the event and within seven days; other
-view events are negatives. Customer and product interaction-count training features include only
-events strictly before the example timestamp (all events at that timestamp are excluded).
-Evaluation holds
-out the latest 20% of event times, excludes training examples within seven days before the
-boundary, and omits the latest seven days from holdout. The ranker model is stored locally at
-`recommendations/ranker.txt`; until it is trained, the service uses retrieval scores and
-popularity/deals so the cold-start path remains available. Sentence Transformers may need to
-download its model on first use; without the optional packages, those sources log a warning
-and popularity/affinity/deals still work.
-The evaluation creates up to 20 candidates for each holdout session at its first product
-interaction, taking up to five each from as-of ALS, static-catalog content neighbors,
-complementary co-purchases built only from pre-split realized orders, and trending products
-counted only from training-period events, then filling any remaining slots by score. It excludes
-the anchor and products already purchased before the query. A positive is a
-candidate product purchased by the same customer after the query, on the same day and within
-seven days; other retrieved candidates are negatives. It reports Recall@5/10, NDCG@5/10, and
-MRR@5/10 separately for cold-start, one-time, repeat-base, and browse-only cohorts. Sessions
-need at least 10 candidates and both labels to count as rankable. This is an offline retrieved-
-candidate replay, not an impression-level online experiment. Treat cohorts with fewer than 100
-rankable sessions as underpowered; 500 or more is preferred. Set `--sample-limit 0` to use all
-clickstream events.
+Sentence Transformers + FAISS, and a LightGBM ranker. The ranker is optional: until
+`recommendations/ranker.txt` exists (written by the evaluation), the service sorts by fused
+retrieval scores. Without the optional packages, those sources log a warning and
+popularity/affinity/deals still work.
+
+### How recommendations are evaluated
+
+`python -m recommendations.evaluate` answers one question for every real order in the held-out
+final period: **given everything known one hour before the order, does the system rank the
+products the customer actually bought near the top?** That is the job of the home-page
+"Recommended for you" row.
+
+- **Three time periods, no peeking.** Retrieval sources (ALS, co-purchases, trending, recent
+  activity) learn only from data before each period's cut-off, with a 7-day gap. The ranker is
+  trained on candidate lists for orders in the middle period (B) and everything is scored on the
+  final period (C).
+- **Same lists, different orderings.** For each order a candidate list of up to 100 products is
+  built (20 per source, then filled by score; already-bought products excluded). Random order,
+  popularity, retrieval score (production without a ranker), the old 3-feature ranker, the new
+  11-feature ranker, the production 50/50 blend and a segment-aware policy all rank the *same*
+  lists, so differences come from ranking alone.
+- **Two views.** *End to end* uses every test order (a bought product missing from the list counts
+  as a miss). *Ranking only* uses orders whose list contains a bought product.
+- **Segments and uncertainty.** Results are reported for first-time and repeat buyers, with a
+  power label (under 100 orders = underpowered) and paired-bootstrap 95% confidence intervals.
+- Reports are written to `recommendations/reports/evaluation_report.md` and `.json`.
+
+> **Why the evaluation was rebuilt.** The earlier version used the first product a shopper viewed in
+> a visit as the query and counted a candidate as correct only if bought later that day. The viewed
+> product was usually the one bought, but it is excluded from the candidates, so only about 1 in
+> 2,800 lists contained a correct answer and the metrics measured almost nothing.
+
+### Results (default dataset: 33,060 customers, 10,000 products, 1 Jan 2025 – 30 Jun 2026, seed 42)
+
+End-to-end NDCG@10 on 4,658 held-out orders (adequately powered):
+
+| Ordering | All orders | First-time buyers (1,454) | Repeat buyers (3,204) |
+|---|---|---|---|
+| Random | 0.004 | 0.003 | 0.005 |
+| Popularity | 0.015 | 0.022 | 0.011 |
+| Retrieval score (previous production) | 0.018 | 0.010 | 0.022 |
+| Old ranker (3 features) | 0.003 | 0.001 | 0.004 |
+| **New ranker (11 features)** | **0.025** | 0.019 | **0.028** |
+| **Production blend (50/50)** | **0.026** | 0.021 | **0.028** |
+| **Segment-aware (served)** | **0.026** | **0.022** | **0.028** |
+
+- The new ranker beats retrieval scores by +0.0072 NDCG@10 (95% CI +0.0047 to +0.0099), about
+  +40% relative, and beats popularity and the old ranker; all intervals exclude zero.
+- The old 3-feature ranker was worse than random: its features could not separate candidates.
+- Popularity is the best signal for **first-time buyers**, so the home page now shows them trending
+  products first (the segment-aware policy). Overall it ties the blend (+0.0002, CI −0.0009 to
+  +0.0013) while matching popularity for first-time buyers.
+- Within lists that contain a bought product, NDCG@10 rises from 0.171 (retrieval) to 0.239 (blend).
+- **Retrieval is the bottleneck:** only 11.6% of test orders had a bought product in the candidate
+  list at all. Collaborative filtering found one for 10.8% of orders, trending 7.9%, recent
+  activity 4.3%, content similarity 3.4%, co-purchases 1.9%.
+- What the ranker relies on most: product popularity, how many sources agreed on a product,
+  the retrieval score, the source, and how many products the customer bought before.
+
+ALS settings were tuned with `python -m recommendations.tune_als` (chosen on the validation period,
+checked once on the test period): views weighted 0.5, cart adds 3 and purchases 8 (previously
+1/3/5), 32 factors (previously 48). Held-out Recall@20 0.0669 → 0.0699, NDCG@20 0.0435 → 0.0453.
+Full grid: `recommendations/reports/als_tuning.md`.
+
+To reproduce: generate with `PANTREE_TODAY=2026-06-30`, then run `python -m recommendations.tune_als`
+and `python -m recommendations.evaluate`. Absolute numbers are low because the task is predicting
+the exact product out of 10,000; compare orderings with each other, not with published benchmarks.
 
 To extend an initialized warehouse and explicitly grow the customer population, set
 `PANTREE_TODAY` to the desired end date and `PANTREE_INCREMENT_TARGET_CUSTOMERS` to the desired
@@ -617,12 +659,13 @@ customers or products.
   trending results and ranks markdowns for deal candidates.
 - `recommendations/candidates/fusion.py` deduplicates source results while preserving the
   winning source tag and reason.
-- `recommendations/ranker.py` builds point-in-time click features, applies same-day future
-  purchase labels, and trains/scores with LightGBM; no post-event signals are used as features.
+- `recommendations/ranker.py` builds the 11 point-in-time candidate features (shared by training
+  and serving, so they cannot drift apart) and trains/scores the LightGBM LambdaRank model.
 - `recommendations/serve.py` routes homepage, product, and cart requests, applies stock,
   category, gender, cart, and already-bought filters, then returns ranked explanations.
-- `recommendations/evaluate.py` runs a chronological retrieved-candidate holdout evaluation on a
-  sample or the full warehouse and saves the local serving ranker.
+- `recommendations/evaluate.py` runs the three-period order-level evaluation described above,
+  writes the reports and saves the serving ranker.
+- `recommendations/tune_als.py` tunes ALS interaction weights and hyperparameters.
 
 ## Validation
 - `validators/validate_dataset.py` — cross-table integrity, temporal order, funnel ordering,
@@ -631,15 +674,32 @@ customers or products.
   (base rate + leakage-safe AUC + top-decile lift), so labels can't silently drift to an
   unmodelable rate.
 
-## Projects built on this platform
-The generated warehouse can also support analysis projects such as RFM, customer lifetime
-value, churn, marketing effectiveness, and voice-of-customer analysis. This guide documents
-the recommendation feature above; separate build guides for the other project ideas are not
-included in this repository.
+## Data analysis
+
+`analysis/pantree_insights.ipynb` explores the generated warehouse with charts; rebuild it with
+`pip install -r requirements-analysis.txt` then `python analysis/build_notebook.py`. Findings on the default dataset:
+
+- **Conversion:** 2.7% of 815,666 sessions end in a purchase; only 9% of cart adds are bought.
+- **Cash on delivery:** 6.6% of COD parcels come back undelivered (RTO) vs 2.7% for prepaid (2.4×).
+- **Returns:** 16.7% of delivered items are returned (footwear 19.8%, accessories 12.4%);
+  size and fit problems explain 39% of returns.
+- **Channels:** a Referral customer is worth ₹3,661 on average vs ₹1,428 for Social Ads (2.6×).
+- **Repeat buyers:** 53% of buyers order again and bring 80% of revenue.
+- **Price change:** after 1 Feb 2025 customers paid 8.5% more relative to list price.
+- **Data gap found:** the festival calendar in `generators/config.py` ends in June 2025, so later
+  festive seasons (e.g. Diwali 2025) get no demand boost. Extending it is a next step.
+
+The generated warehouse can also support RFM, customer lifetime value, churn (labels included)
+and marketing-mix projects.
 
 ## Honest notes
 - This is **realistic synthetic data** with deliberately engineered, documented signal — it is
   validated and leakage-checked, but it is simulated, not production data.
+- In the simulator, browse-only visits view **random** products, so most clicks carry no taste
+  signal; only purchases reflect customer preferences. This caps what any recommender can learn
+  and is why purchases are weighted most heavily.
+- The evaluation is an offline replay on historical orders, not a live A/B test; the site does
+  not yet log which recommendations were shown or clicked.
 - Product images source from a real fashion catalogue (`generators/product_details.csv`);
   for the live site, images are served locally so they always load.
 
