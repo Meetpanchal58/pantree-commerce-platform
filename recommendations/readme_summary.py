@@ -156,10 +156,11 @@ def build_insights(summary: dict) -> str:
                      "controls for the shop's growth.")
     churn = summary.get("churn")
     if churn:
-        lines.append(f"- **Churn model:** on the latest held-out snapshots, gradient boosting reaches ROC-AUC "
-                     f"{churn['test_auc']:.3f} (95% CI {churn['test_auc_ci']}) vs {churn['rule_auc']:.3f} for a "
-                     f"days-since-last-order rule; targeting the top 10% catches {churn['top_decile_capture']:.0%} of "
-                     f"churners at {churn['top_decile_lift']:.1f}× the base rate.")
+        lines.append(f"- **Churn model:** on the latest held-out snapshots (temporal split, 90-day embargo), "
+                     f"{churn['model'].lower()} (chosen on validation) reaches ROC-AUC {churn['test_auc']:.3f} "
+                     f"(95% CI {churn['test_auc_ci']}) vs {churn['rule_auc']:.3f} for a days-since-last-order rule; "
+                     f"targeting the top 10% catches {churn['top_decile_capture']:.0%} of churners at "
+                     f"{churn['top_decile_lift']:.1f}× the base rate ({churn['base_rate']:.0%}). Weak, but leakage-free.")
         lines.append(f"- **Leakage found:** the generator's `customer_monthly_features` count orders from the whole "
                      f"snapshot month, after `snapshot_date` ({summary['churn_stored_feature_leaky_rows']:,} rows); "
                      f"trained on them the same model would report AUC {churn['leaky_auc']:.3f}. The notebook rebuilds "

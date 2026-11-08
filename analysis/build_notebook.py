@@ -316,12 +316,16 @@ models = {
     "Gradient boosting": HistGradientBoostingClassifier(random_state=0),
 }
 scores_test = {"Recency rule": X["test"]["recency_days"].to_numpy(dtype=float)}
+val_auc = {}
 for name, model in models.items():
     if model is None:
         continue
     model.fit(X["train"], y["train"])
-    print(f"{name}: validation AUC {roc_auc_score(y['validation'], model.predict_proba(X['validation'])[:, 1]):.3f}")
+    val_auc[name] = roc_auc_score(y["validation"], model.predict_proba(X["validation"])[:, 1])
+    print(f"{name}: validation AUC {val_auc[name]:.3f}")
     scores_test[name] = model.predict_proba(X["test"])[:, 1]
+best_name = max(val_auc, key=val_auc.get)  # chosen on validation, never on test
+print(f"Chosen on validation: {best_name}")
 print(f"Recency rule: flag customers with no order for more than {best_t} days "
       f"(validation AUC {roc_auc_score(y['validation'], X['validation']['recency_days']):.3f})")
 
@@ -358,11 +362,13 @@ table = pd.DataFrame(rows).set_index("model")
 print(table.round(3).to_string())
 print(f"\\nGradient boosting on the stored (leaky) features would report test AUC {leaky_auc:.3f} "
       f"vs {table.loc['Gradient boosting', 'ROC-AUC']:.3f} with leakage-free features.")
-hgb = table.loc["Gradient boosting"]
-SUMMARY["churn"] = {"test_auc": float(hgb["ROC-AUC"]), "test_auc_ci": hgb["AUC 95% CI"], "pr_auc": float(hgb["PR-AUC"]),
-                    "base_rate": float(base), "top_decile_precision": float(hgb["top-10% precision"]),
-                    "top_decile_lift": float(hgb["top-10% lift"]), "brier": float(hgb["Brier"]),
+best = table.loc[best_name]
+SUMMARY["churn"] = {"model": best_name, "test_auc": float(best["ROC-AUC"]), "test_auc_ci": best["AUC 95% CI"],
+                    "pr_auc": float(best["PR-AUC"]), "base_rate": float(base),
+                    "top_decile_precision": float(best["top-10% precision"]),
+                    "top_decile_lift": float(best["top-10% lift"]), "brier": float(best["Brier"]),
                     "logreg_auc": float(table.loc["Logistic regression", "ROC-AUC"]),
+                    "hgb_auc": float(table.loc["Gradient boosting", "ROC-AUC"]),
                     "rule_auc": float(table.loc["Recency rule", "ROC-AUC"]), "leaky_auc": float(leaky_auc),
                     "test_rows": int(len(y["test"]))}
 """)
@@ -378,16 +384,16 @@ ax.legend(frameon=False); plt.tight_layout(); plt.show()
 """)
 
 code("""
-model = models["Gradient boosting"]
+model = models[best_name]
 imp = permutation_importance(model, X["test"], y["test"], scoring="roc_auc", n_repeats=10, random_state=0)
 importance = pd.Series(imp.importances_mean, index=FEATURES)
-hbar(importance, "Permutation importance on test (drop in ROC-AUC when shuffled)", fmt="{:.3f}", color=SERIES[0])
+hbar(importance, f"Permutation importance on test, {best_name.lower()} (drop in ROC-AUC when shuffled)", fmt="{:.3f}", color=SERIES[0])
 
-order = np.argsort(-scores_test["Gradient boosting"])
+order = np.argsort(-scores_test[best_name])
 captured = np.cumsum(y["test"][order]) / y["test"].sum()
 share = np.arange(1, len(order) + 1) / len(order)
 fig, ax = plt.subplots(figsize=(5.2, 4.2))
-ax.plot(share, captured, color=SERIES[0], label="Gradient boosting")
+ax.plot(share, captured, color=SERIES[0], label=best_name)
 ax.plot([0, 1], [0, 1], color=MUTED, lw=1, ls="--", label="random targeting")
 ax.axvline(0.1, color=GRID, lw=1)
 ax.xaxis.set_major_formatter(PercentFormatter(1.0)); ax.yaxis.set_major_formatter(PercentFormatter(1.0))
@@ -400,14 +406,15 @@ SUMMARY["churn"]["top_features"] = importance.sort_values(ascending=False).head(
 
 code("""
 c = SUMMARY["churn"]
-print(f"Targeting the top 10% of customers by predicted risk catches {c['top_decile_capture']:.0%} of churners "
+print(f"{c['model']}: targeting the top 10% of customers by predicted risk catches {c['top_decile_capture']:.0%} of churners "
       f"at {c['top_decile_lift']:.1f}× the base rate ({c['top_decile_precision']:.0%} of those contacted churn vs {c['base_rate']:.0%} overall).")
 """)
 
 md("""
 **Limitations.** The data is synthetic: churn emerges from the simulator's rules (purchase frequency fades after
 45 days without an order, price-sensitive customers buy less after the February 2025 price change), and the strongest
-features mirror those rules, so real-world performance would be lower. `generators/gen_support.py` describes
+signals that drive it (time since the last order, price sensitivity) are only partly visible in the features, so the
+leakage-free model is weak; that weakness is the honest result. Real data would differ. `generators/gen_support.py` describes
 NPS-driven churn, but it is not part of the default generation pipeline; support contacts here carry random sentiment,
 which is why they add little. The stored `customer_monthly_features` table leaks the snapshot month and should be fixed
 in `generators/finalize_dataset.py` before anyone trains on it directly.
