@@ -51,7 +51,7 @@ def build(report: dict) -> str:
         "- **Method:** 5 retrieval sources (implicit ALS, trending, recent activity, FAISS content similarity, "
         "co-purchase) → 11-feature LightGBM LambdaRank → segment-aware policy (popularity for first-time buyers).",
         f"- **Evaluation:** 3-period temporal split, {st['embargo_days']}-day embargo, {oc['orders_with_new_products']:,} "
-        f"held-out orders (of {oc['test_orders']:,}; the rest only re-bought earlier products), paired-bootstrap 95% CIs.",
+        f"held-out orders (of {oc['test_orders']:,}; see order counts below), paired-bootstrap 95% CIs.",
         f"- **Headline:** served policy NDCG@10 {served:.4f} vs {rel['retrieval_ndcg10']:.4f} for retrieval order: "
         f"{diff['mean_diff']:+.4f} absolute (95% CI {diff['ci_low']:+.4f} to {diff['ci_high']:+.4f}), "
         f"{rel['value']:+.0%} relative (95% CI {rel['ci_low']:+.0%} to {rel['ci_high']:+.0%}); "
@@ -105,9 +105,12 @@ def build_eval(report: dict) -> str:
         f"{ceiling['candidate_list_hit_rate']:.1%}; **retrieval ceiling** (top {ceiling['k']} of all eligible products "
         f"by true taste): {ceiling['hit_rate']:.1%}",
         "",
-        f"Order counts: {oc['test_orders']:,} paid orders in the test period; {oc['orders_only_rebuying_previous_products']:,} "
+        f"Order counts: {oc['test_orders']:,} paid orders in the test period. {oc['orders_dropped_no_history']:,} came from "
+        "customers with no earlier activity and are dropped by a known feature-building issue (pandas drops groups with a "
+        f"missing history anchor; left unchanged so results stay comparable). {oc['orders_only_rebuying_previous_products']:,} "
         f"only re-bought earlier products (excluded from candidates), leaving {oc['orders_with_new_products']:,} for the "
-        f"end-to-end tables. {oc['orders_with_purchase_in_list']:,} had a bought product in the list; ranking-only tables "
+        f"end-to-end tables. {oc['orders_with_purchase_in_list']:,} had a bought product in the list "
+        f"({oc['orders_with_purchase_in_list_dropped_no_history']:,} of them no-history orders); ranking-only tables "
         f"also need at least {report['settings']['min_pool']} candidates and one not-bought candidate "
         f"({oc['dropped_list_under_min_pool']:,} + {oc['dropped_list_all_purchased']:,} dropped), leaving "
         f"{oc['ranking_only_orders']:,}.",

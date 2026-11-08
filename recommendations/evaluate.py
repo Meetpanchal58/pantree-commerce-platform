@@ -604,11 +604,20 @@ def main(sample_limit: int = 400000, use_content: bool = True) -> dict:
     # Why the order counts differ between sections.
     pool_sizes = test_c.groupby("session_id")["label"].agg(["size", "sum"])
     with_purchase = pool_sizes[pool_sizes["sum"] > 0]
+    # Known issue, reported rather than changed so existing results stay comparable:
+    # add_features groups by (session, customer, anchor, time) and pandas drops groups
+    # whose anchor is missing, i.e. orders from customers with no prior views or
+    # purchases. Those orders never reach the scored tables.
+    no_anchor = set(pools_c.loc[pools_c["anchor"].isna(), "session_id"])
+    no_anchor_hits = set(pools_c.loc[pools_c["anchor"].isna() & pools_c["label"].eq(1), "session_id"])
+    scored = set(test_c["session_id"])
     order_counts = {
         "test_orders": int(len(queries_c)),
         "orders_with_new_products": int(test_all["session_id"].nunique()),
-        "orders_only_rebuying_previous_products": int(len(queries_c) - test_all["session_id"].nunique()),
+        "orders_dropped_no_history": int(len(no_anchor)),
+        "orders_only_rebuying_previous_products": int(len(scored) - test_all["session_id"].nunique()),
         "orders_with_purchase_in_list": int(retrieval_stats["pool_contains_purchase"]),
+        "orders_with_purchase_in_list_dropped_no_history": int(len(no_anchor_hits)),
         "dropped_list_under_min_pool": int(((with_purchase["size"] < MIN_POOL)).sum()),
         "dropped_list_all_purchased": int(((with_purchase["size"] >= MIN_POOL) & (with_purchase["sum"] == with_purchase["size"])).sum()),
         "ranking_only_orders": int(test["session_id"].nunique()),
@@ -745,9 +754,13 @@ def write_report(report: dict) -> None:
     oc = report["order_counts"]
     lines += ["## Why the order counts differ", "",
               f"- {oc['test_orders']:,} paid orders fall in the test period.",
-              f"- {oc['orders_only_rebuying_previous_products']:,} of them only re-bought products the customer already had; "
+              f"- {oc['orders_dropped_no_history']:,} came from customers with no earlier views or purchases; a known issue "
+              "(feature building groups by the history anchor and drops groups without one) leaves them out of the scored "
+              "tables. Kept as-is so results stay comparable; fixing it is a follow-up.",
+              f"- {oc['orders_only_rebuying_previous_products']:,} only re-bought products the customer already had; "
               f"those products are excluded from candidates, so the end-to-end tables use {oc['orders_with_new_products']:,} orders.",
-              f"- {oc['orders_with_purchase_in_list']:,} orders had a bought product in the candidate list. Ranking-only tables "
+              f"- {oc['orders_with_purchase_in_list']:,} orders had a bought product in the candidate list "
+              f"({oc['orders_with_purchase_in_list_dropped_no_history']:,} of them among the no-history orders above). Ranking-only tables "
               f"need at least {report['settings']['min_pool']} candidates and at least one product that wasn't bought: "
               f"{oc['dropped_list_under_min_pool']:,} dropped for a short list and {oc['dropped_list_all_purchased']:,} because every "
               f"candidate was bought, leaving {oc['ranking_only_orders']:,}.", ""]
