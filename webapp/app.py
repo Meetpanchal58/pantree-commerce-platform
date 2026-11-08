@@ -36,15 +36,17 @@ from webapp.routes import auth, catalog, commerce, home
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    try:
-        await asyncio.to_thread(warm_homepage_caches)
-    except Exception:
-        logger.exception("Homepage recommendation cache warmup failed")
     homepage_feeds_ready = asyncio.Event()
     app.state.homepage_feed_responses = 0
     app.state.homepage_feeds_ready = homepage_feeds_ready
 
     async def warm_secondary_recommendations():
+        # Warm in the background so uvicorn binds its port immediately; slow
+        # hosts (e.g. Render's free tier) otherwise time out the port scan.
+        try:
+            await asyncio.to_thread(warm_homepage_caches)
+        except Exception:
+            logger.exception("Homepage recommendation cache warmup failed")
         try:
             await asyncio.wait_for(homepage_feeds_ready.wait(), timeout=30)
         except asyncio.TimeoutError:
