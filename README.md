@@ -94,9 +94,12 @@ For a local test, configure at least one way to receive codes:
   and set `OPENSMS_API_KEY` to the key from OpenSMS. Do not expose the phone's endpoint to the
   public internet.
 
-The current production setup requires both email and SMS settings, even if you expect most
-shoppers to use only one method. For production, also set `PANTREE_RATE_LIMIT_SECRET` to a
-private random value of at least 32 characters. Do not put real passwords or keys in GitHub.
+The supplied Docker production setup requires both email and SMS settings. On Render, you can
+use email OTP alone: configure all four SMTP values above, and the sign-in page will offer email
+only when OpenSMS is not configured. A phone's local Wi-Fi address is not reachable from Render;
+do not expose the OpenSMS API or its key publicly. For production, also set
+`PANTREE_RATE_LIMIT_SECRET` to a private random value of at least 32 characters. Do not put real
+passwords or keys in GitHub.
 See the detailed
 [email and phone sign-in setup](#passwordless-authentication) if you need provider-specific help.
 

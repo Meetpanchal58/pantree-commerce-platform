@@ -44,6 +44,31 @@ body{font-family:Inter,"Segoe UI",Arial,sans-serif;color:var(--ink);background:r
 </style>
 </head>
 <body>
+{% if email_enabled and phone_enabled %}
+  {% set contact_label = "Email or mobile number" %}
+  {% set contact_examples = "you@example.com or +1 415 555 2671" %}
+  {% set contact_type = "text" %}
+  {% set contact_mode = "email" %}
+  {% set channel_description = "email or mobile number" %}
+{% elif email_enabled %}
+  {% set contact_label = "Email address" %}
+  {% set contact_examples = "you@example.com" %}
+  {% set contact_type = "email" %}
+  {% set contact_mode = "email" %}
+  {% set channel_description = "email" %}
+{% elif phone_enabled %}
+  {% set contact_label = "Mobile number" %}
+  {% set contact_examples = "+1 415 555 2671" %}
+  {% set contact_type = "tel" %}
+  {% set contact_mode = "tel" %}
+  {% set channel_description = "mobile number" %}
+{% else %}
+  {% set contact_label = "Contact" %}
+  {% set contact_examples = "" %}
+  {% set contact_type = "text" %}
+  {% set contact_mode = "text" %}
+  {% set channel_description = "email or mobile number" %}
+{% endif %}
 <main class="auth-shell">
   <section class="auth-intro">
     <div class="logo">Pan<span>tree</span></div>
@@ -63,21 +88,24 @@ body{font-family:Inter,"Segoe UI",Arial,sans-serif;color:var(--ink);background:r
       <section id="login">
         <div id="identifier-step">
           <h2>Welcome back</h2>
-          <p class="auth-subtitle">Sign in or create an account with a one-time code sent to your email or mobile number.</p>
+          <p class="auth-subtitle">Sign in or create an account with a one-time code sent to your {{ channel_description }}.</p>
+          {% if not email_enabled and not phone_enabled %}
+          <div class="msg" role="alert">Sign-in is temporarily unavailable. Please try again later.</div>
+          {% endif %}
           <form id="otp-request">
-            <label for="identifier">Email or mobile number</label>
-            <input id="identifier" name="identifier" type="text" autocomplete="username" inputmode="email" placeholder="you@example.com or +1 415 555 2671" required>
+            <label for="identifier">{{ contact_label }}</label>
+            <input id="identifier" name="identifier" type="{{ contact_type }}" autocomplete="username" inputmode="{{ contact_mode }}" placeholder="{{ contact_examples }}" {% if not email_enabled and not phone_enabled %}disabled{% endif %} required>
             <label for="device">Device</label>
             <select id="device" name="device">
               <option>Desktop Web</option><option>Android App</option><option>iOS App</option><option>Mobile Web</option>
             </select>
-            <button class="btn" type="submit">Continue with OTP</button>
+            <button class="btn" type="submit" {% if not email_enabled and not phone_enabled %}disabled{% endif %}>Continue with OTP</button>
             <div class="security-note"><span aria-hidden="true">🔒</span><div>Your one-time code is private. Never share it with anyone, including Pantree support.</div></div>
           </form>
         </div>
         <div id="code-step" hidden>
           <h2>Verify your sign-in</h2>
-          <p class="auth-subtitle" id="code-destination">Enter the 6-digit code sent to your email or phone.</p>
+          <p class="auth-subtitle" id="code-destination">Enter the 6-digit code sent to your {{ channel_description }}.</p>
           <form id="otp-verify">
             <input type="hidden" name="device_id" id="device-id">
             <input type="hidden" name="pre_auth_session_id" id="pre-auth-session-id">
@@ -96,10 +124,10 @@ body{font-family:Inter,"Segoe UI",Arial,sans-serif;color:var(--ink);background:r
 
       <section id="signup" style="display:none">
         <h2>Create your account</h2>
-        <p class="auth-subtitle">Verify your email or mobile number to create your Pantree account.</p>
-        <label for="signup-identifier">Email or mobile number</label>
-        <input id="signup-identifier" type="text" autocomplete="email" inputmode="email" placeholder="you@example.com or +1 415 555 2671">
-        <button class="btn" type="button" onclick="requestCode()">Continue with OTP</button>
+        <p class="auth-subtitle">Verify your {{ channel_description }} to create your Pantree account.</p>
+        <label for="signup-identifier">{{ contact_label }}</label>
+        <input id="signup-identifier" type="{{ contact_type }}" autocomplete="email" inputmode="{{ contact_mode }}" placeholder="{{ contact_examples }}" {% if not email_enabled and not phone_enabled %}disabled{% endif %}>
+        <button class="btn" type="button" onclick="requestCode()" {% if not email_enabled and not phone_enabled %}disabled{% endif %}>Continue with OTP</button>
         <small>Your account will be created after you verify the code.</small>
       </section>
     </div>
@@ -112,10 +140,11 @@ const authMessage=document.getElementById("auth-message");
 const resendButton=document.getElementById("resend-code");
 const identifierField=document.getElementById("identifier");
 const signupIdentifierField=document.getElementById("signup-identifier");
+const phoneEnabled={{ phone_enabled|tojson }};
 let activeAuthView="login";
 let resendTimer;
 
-identifierField.addEventListener("input",()=>{
+if(phoneEnabled)identifierField.addEventListener("input",()=>{
   identifierField.inputMode=identifierField.value.includes("@")?"email":"tel";
 });
 function show(view){
@@ -205,7 +234,8 @@ async function requestCode(resend=false){
     }
     document.getElementById("login").style.display="block";
     document.getElementById("signup").style.display="none";
-    document.getElementById("code-destination").textContent="Enter the 6-digit code sent to your email or phone.";
+    const destination=result.channel==="email"?"email":"phone";
+    document.getElementById("code-destination").textContent=`Enter the 6-digit code sent to your ${destination}.`;
     if(!resend)document.getElementById("otp-code").focus();
     setMessage(resend?"A new code has been requested.":"Your code has been sent.",true);
     startResendTimer();
