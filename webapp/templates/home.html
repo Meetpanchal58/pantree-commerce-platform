@@ -1,12 +1,236 @@
 {% extends "base.html" %}{% from "_card.html" import product_card with context %}
 {% block content %}
+<style>
+.home-recommendations{margin-top:22px}
+.home-recommendations .section-head{align-items:center;margin-bottom:12px}
+.recommendation-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:14px}
+.recommendation-card{padding:10px}
+.recommendation-card img{height:176px;object-fit:contain}
+.recommendation-card .brand{margin-top:8px}
+.recommendation-card .name{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;min-height:38px}
+.recommendation-card .wishlist-button{top:18px;right:18px;left:auto}
+.recommendation-card .rating{min-height:20px}
+.recommendation-card .recommendation-prices{margin-top:5px}
+.recommendation-card .recommendation-stock{margin-top:5px}
+.recommendation-card .recommendation-cart{margin-top:8px}
+.recommendation-card .card-quantity{margin-top:8px}
+.recommendation-price{font-size:14px;margin-top:8px}
+.recommendation-more{display:flex;justify-content:flex-end;margin-top:10px}
+.recommendation-more button{border:1px solid var(--line);border-radius:999px;background:#fff;color:var(--forest);padding:9px 14px;font:inherit;font-weight:750;cursor:pointer}
+.recommendation-more button:hover{background:var(--mint)}
+.recommendation-message{grid-column:1/-1;color:var(--muted);padding:16px 0}
+@media(max-width:1050px){.recommendation-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+@media(max-width:760px){.recommendation-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.recommendation-card img{height:145px}}
+@media(max-width:520px){.recommendation-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.recommendation-card img{height:155px}}
+</style>
+
 <section class="hero-band">
 	<div><div class="eyebrow">The new Pantree edit</div><h1>Everyday pieces, <em>well chosen.</em></h1><p>Explore real catalog products across apparel, footwear and accessories.</p><a class="hero-cta" href="/browse">Shop the full catalog <span>→</span></a></div>
 	<div class="hero-art"><span>CURATED<br>FOR YOU</span></div>
 </section>
-<section class="home-section"><div class="section-head"><div><div class="eyebrow">Browse the edit</div><h2 class="section">Shop by department</h2></div><a class="text-link" href="/browse">View all →</a></div>
+
+<section class="home-section home-recommendations" aria-labelledby="personalized-heading">
+	<div class="section-head">
+		<div><div class="eyebrow" id="personalized-eyebrow">Picked from your activity</div><h2 class="section" id="personalized-heading">Recommended for you</h2></div>
+	</div>
+	<div id="personalized-recommendations" class="recommendation-grid" aria-live="polite">
+		<p class="recommendation-message">Finding products based on your browsing and purchases…</p>
+	</div>
+	<div class="recommendation-more" id="personalized-more" hidden>
+		<button type="button" aria-label="See more recommended products">More recommendations <span aria-hidden="true">→</span></button>
+	</div>
+</section>
+
+<section class="home-section home-recommendations" aria-labelledby="trending-heading">
+	<div class="section-head">
+		<div><div class="eyebrow">Popular with shoppers</div><h2 class="section" id="trending-heading">Trending products</h2></div>
+		<a class="text-link" href="/browse?sort=rating">Shop all products →</a>
+	</div>
+	<div id="trending-recommendations" class="recommendation-grid" aria-live="polite">
+		<p class="recommendation-message">Loading trending products…</p>
+	</div>
+	<div class="recommendation-more" id="trending-more" hidden>
+		<button type="button" aria-label="See more trending products">More trending products <span aria-hidden="true">→</span></button>
+	</div>
+</section>
+
+<section class="home-section">
+	<div class="section-head"><div><div class="eyebrow">Browse the edit</div><h2 class="section">Shop by department</h2></div><a class="text-link" href="/browse">View all →</a></div>
 	<div class="department-grid">{% for d in departments %}<a class="department" href="/browse?department={{ d|urlencode }}"><span>{{ d }}</span><small>{{ home_stats.products // departments|length if departments else 0 }}+ styles</small><b>Explore →</b></a>{% endfor %}</div>
 </section>
-<section class="home-section"><div class="section-head"><div><div class="eyebrow">Trending now</div><h2 class="section">Top-rated picks</h2></div><a class="text-link" href="/browse?sort=rating">See all →</a></div>
-<div class="grid">{% for p in prods %}{{ product_card(p) }}{% endfor %}</div></section>
+
+<script>
+function renderRecommendationCard(item) {
+	const card = document.createElement("article");
+	card.className = "card product-card recommendation-card";
+	card.dataset.productId = item.product_id;
+	card.dataset.stock = item.current_stock;
+
+	const link = document.createElement("a");
+	link.href = `/product/${encodeURIComponent(item.product_id)}`;
+	const image = document.createElement("img");
+	image.src = item.image_url || `https://loremflickr.com/300/300/${encodeURIComponent(item.category || "fashion")}?lock=${encodeURIComponent(item.product_id)}`;
+	image.alt = item.name || "Recommended product";
+	image.loading = "lazy";
+	image.dataset.name = item.brand_name || "";
+	image.dataset.cat = item.category || "";
+	image.onerror = function () { imgFallback(this); };
+	const brand = document.createElement("div");
+	brand.className = "brand";
+	brand.textContent = item.brand_name || item.source || "";
+	const name = document.createElement("div");
+	name.className = "name";
+	name.textContent = item.name || "View product";
+	link.append(image, brand, name);
+
+	const wishlist = document.createElement("button");
+	wishlist.type = "button";
+	wishlist.className = `wishlist-button${item.wishlisted ? " is-wishlisted" : ""}`;
+	wishlist.dataset.productId = item.product_id;
+	wishlist.textContent = item.wishlisted ? "♥" : "♡";
+	wishlist.setAttribute("aria-label", item.wishlisted ? "Remove from wishlist" : "Add to wishlist");
+	wishlist.setAttribute("aria-pressed", String(Boolean(item.wishlisted)));
+	wishlist.addEventListener("click", () => toggleWishlist(item.product_id, wishlist));
+
+	const rating = document.createElement("div");
+	rating.className = "rating";
+	const hasRating = Number.isFinite(Number(item.avg_rating)) && Number(item.avg_rating) > 0;
+	if (hasRating) {
+		rating.textContent = `${"★".repeat(Math.max(0, Math.min(5, Math.floor(Number(item.avg_rating)))))} ${Number(item.avg_rating).toFixed(1)} · ${Number(item.review_count || 0).toLocaleString("en-IN")} reviews`;
+	} else {
+		rating.textContent = `No ratings yet · ${Number(item.review_count || 0).toLocaleString("en-IN")} reviews`;
+	}
+
+	const prices = document.createElement("div");
+	prices.className = "recommendation-prices";
+	const hasCurrentPrice = item.current_price !== null && item.current_price !== undefined && item.current_price !== "" && Number.isFinite(Number(item.current_price));
+	if (hasCurrentPrice) {
+		const mop = document.createElement("span");
+		mop.className = "price recommendation-price";
+		mop.textContent = `₹${Number(item.current_price).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
+		prices.append(mop);
+	}
+	if (hasCurrentPrice && item.mrp !== null && item.mrp !== undefined && item.mrp !== "" && Number.isFinite(Number(item.mrp)) && Number(item.mrp) > Number(item.current_price)) {
+		const mrp = document.createElement("span");
+		mrp.className = "mrp";
+		mrp.textContent = `₹${Number(item.mrp).toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
+		prices.append(mrp);
+		const discount = document.createElement("span");
+		discount.className = "stock-ok";
+		discount.textContent = ` ${Math.round((1 - Number(item.current_price) / Number(item.mrp)) * 100)}% off`;
+		prices.append(discount);
+	}
+
+	const stock = document.createElement("div");
+	stock.className = "stock-ok recommendation-stock";
+	stock.textContent = `In stock (${Number(item.current_stock).toLocaleString("en-IN")})`;
+
+	card.append(wishlist, link, rating, prices, stock);
+	applyRecommendationCartState(card, Number(item.cart_quantity || 0));
+	return card;
+}
+
+function applyRecommendationCartState(card, quantity) {
+	card.querySelector(".recommendation-cart")?.remove();
+	card.querySelector(".card-quantity")?.remove();
+	const productId = card.dataset.productId;
+	const stock = Number(card.dataset.stock || 0);
+	if (quantity > 0) {
+		const controls = document.createElement("div");
+		controls.className = "card-quantity";
+		const label = document.createElement("small");
+		label.textContent = "In your cart";
+		const row = document.createElement("div");
+		row.className = "quantity-control";
+		const decrease = document.createElement("button");
+		decrease.type = "button";
+		decrease.textContent = "−";
+		decrease.setAttribute("aria-label", "Decrease quantity");
+		decrease.addEventListener("click", () => updateCartQuantity(productId, -1));
+		const count = document.createElement("output");
+		count.dataset.quantity = "";
+		count.textContent = quantity;
+		const increase = document.createElement("button");
+		increase.type = "button";
+		increase.textContent = "+";
+		increase.disabled = quantity >= stock;
+		increase.setAttribute("aria-label", "Increase quantity");
+		increase.addEventListener("click", () => updateCartQuantity(productId, 1));
+		row.append(decrease, count, increase);
+		controls.append(label, row);
+		card.append(controls);
+		return;
+	}
+
+	const button = document.createElement("button");
+	button.type = "button";
+	button.className = "btn add-cart-button recommendation-cart";
+	button.textContent = "Add to Cart";
+	button.addEventListener("click", () => addToCart(productId));
+	card.append(button);
+}
+
+async function loadRecommendationFeed({ surface, intent, containerId, moreId, emptyMessage }) {
+	const container = document.getElementById(containerId);
+	const moreButton = document.querySelector(`#${moreId} button`);
+	const pageSize = 15;
+	let items = [];
+	let visibleCount = 0;
+
+	try {
+		const response = await fetch(`/api/recommendations/${surface}?intent=${intent}&limit=30`);
+		if (!response.ok) throw new Error("Recommendation request failed");
+		items = await response.json();
+		if (!Array.isArray(items)) throw new Error("Unexpected recommendation response");
+		if (intent === "personalized" && items.length && items.every(item => ["trending", "catalog_fallback"].includes(item.source))) {
+			document.getElementById("personalized-eyebrow").textContent = "A fresh start";
+			document.getElementById("personalized-heading").textContent = "Popular while we learn your taste";
+		}
+		if (intent === "trending" && items.length && items.every(item => item.source === "catalog_fallback")) {
+			document.getElementById("trending-heading").textContent = "Popular products";
+			document.querySelector("#trending-heading")?.previousElementSibling?.replaceChildren("Highly rated picks to get started");
+		}
+		container.replaceChildren();
+		if (!items.length) {
+			container.innerHTML = "";
+			const message = document.createElement("p");
+			message.className = "recommendation-message";
+			message.textContent = emptyMessage;
+			container.append(message);
+			return;
+		}
+
+		function showNextPage() {
+			const nextItems = items.slice(visibleCount, visibleCount + pageSize);
+			nextItems.forEach(item => container.append(renderRecommendationCard(item)));
+			visibleCount += nextItems.length;
+			document.getElementById(moreId).hidden = visibleCount >= items.length;
+		}
+		moreButton.addEventListener("click", showNextPage);
+		showNextPage();
+	} catch (error) {
+		container.replaceChildren();
+		const message = document.createElement("p");
+		message.className = "recommendation-message";
+		message.textContent = "Recommendations could not be loaded. Please refresh the page.";
+		container.append(message);
+		console.error(error);
+	}
+}
+
+loadRecommendationFeed({
+	surface: "homepage",
+	intent: "personalized",
+	containerId: "personalized-recommendations",
+	moreId: "personalized-more",
+	emptyMessage: "No recommendations are available right now."
+});
+loadRecommendationFeed({
+	surface: "homepage",
+	intent: "trending",
+	containerId: "trending-recommendations",
+	moreId: "trending-more",
+	emptyMessage: "No trending products are available right now."
+});
+</script>
 {% endblock %}

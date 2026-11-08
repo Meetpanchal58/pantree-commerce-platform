@@ -11,7 +11,7 @@ a{color:inherit;text-decoration:none}
 .nav{background:var(--forest);color:#fff;display:flex;align-items:center;gap:18px;padding:15px max(18px,calc((100% - 1420px)/2));position:sticky;top:0;z-index:20}
 .nav .logo{font-size:25px;font-weight:800;color:#fff;letter-spacing:-1px}.nav .logo span{color:#e9bf62}
 .nav form.search{flex:1;display:flex;max-width:760px;background:#fff;border-radius:7px;overflow:hidden}.nav .search input{flex:1;border:none;padding:12px 14px;font-size:14px;outline:none}.nav .search button{border:none;background:var(--gold);padding:0 18px;cursor:pointer;font-weight:800}
-.nav .navlink{font-size:12px;line-height:1.25;white-space:nowrap}.nav .navlink b{font-size:13px}.nav .cart{display:flex;align-items:center;gap:6px;font-weight:700;white-space:nowrap}.nav .badge{background:var(--gold);color:#17221f;border-radius:999px;padding:2px 7px;font-size:12px}
+.nav .navlink{font-size:12px;line-height:1.25;white-space:nowrap}.nav .navlink b{font-size:13px}.nav .logout-form{margin:0}.nav .logout-button{background:none;border:0;color:#fff;cursor:pointer;font-family:inherit;padding:0}.nav .cart{display:flex;align-items:center;gap:6px;font-weight:700;white-space:nowrap}.nav .badge{background:var(--gold);color:#17221f;border-radius:999px;padding:2px 7px;font-size:12px}
 .refresh{background:transparent;color:#fff;border:1px solid rgba(255,255,255,.35);padding:9px 11px;border-radius:6px;font-weight:700;cursor:pointer;font-size:12px;white-space:nowrap}.refresh:hover{background:rgba(255,255,255,.1)}
 .subnav{background:#fff;color:var(--forest);display:flex;gap:22px;padding:11px max(18px,calc((100% - 1420px)/2));font-size:12px;border-bottom:1px solid var(--line);overflow-x:auto;white-space:nowrap}.subnav a{font-weight:700}.subnav a:hover{color:var(--coral)}
 .wrap{max-width:1420px;margin:0 auto;padding:24px 22px 50px}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(218px,1fr));gap:16px}
@@ -52,7 +52,7 @@ body{font-family:"Trebuchet MS",Verdana,sans-serif;background:radial-gradient(ci
   <a href="/account" class="navlink">Hello<br><b>{{ first_name }}</b></a>
   <a href="/orders" class="navlink">Orders</a>
   <a href="/cart" class="cart">🛒 Cart <span class="badge">{{ cart_n }}</span></a>
-  <a href="/logout" class="navlink"><b>Sign out</b></a>
+  <form action="/logout" method="post" class="logout-form"><button class="navlink logout-button" type="submit"><b>Sign out</b></button></form>
 </div>
 <div class="subnav">
   <a href="/browse">Shop all</a>
@@ -85,8 +85,15 @@ async function toggleWishlist(pid,button){
   if(r.status===401){location='/login';return;}
   const d=await r.json();
   if(!d.ok){toast(d.message||'Wishlist update failed');return;}
-  button.classList.toggle('is-wishlisted',d.wishlisted);
-  button.textContent=d.wishlisted?'♥':(button.classList.contains('wishlist-detail')?'♡ Add to wishlist':'♡');
+  const buttons=[...document.querySelectorAll('.wishlist-button[data-product-id]')].filter(item=>item.dataset.productId===pid);
+  if(!buttons.includes(button))buttons.push(button);
+  buttons.forEach(item=>{
+    item.classList.toggle('is-wishlisted',d.wishlisted);
+    item.setAttribute('aria-pressed',String(d.wishlisted));
+    item.setAttribute('aria-label',d.wishlisted?'Remove from wishlist':'Add to wishlist');
+    item.textContent=d.wishlisted?'♥':'♡';
+  });
+  if(button.classList.contains('wishlist-detail'))button.textContent=d.wishlisted?'♥ Added to wishlist':'♡ Add to wishlist';
   toast(d.wishlisted?'Added to wishlist':'Removed from wishlist');
 }
 async function addToCart(pid,qty=1){
@@ -96,6 +103,11 @@ async function addToCart(pid,qty=1){
   const d=await r.json();
   if(!d.ok){toast(d.message||'Could not add item');return;}
   document.querySelectorAll('.badge').forEach(b=>b.textContent=d.cart_count);
+  const recommendationCards=[...document.querySelectorAll('.recommendation-card')].filter(card=>card.dataset.productId===pid);
+  if(recommendationCards.length&&typeof applyRecommendationCartState==='function'){
+    recommendationCards.forEach(card=>applyRecommendationCartState(card,d.quantity));
+    toast('Added to cart');return;
+  }
   const card=document.querySelector('[data-product-id="'+pid+'"]');
   if(card){const button=card.querySelector('.add-cart-button'); if(button) button.outerHTML='<div class="card-quantity"><small>In your cart</small><div class="quantity-control"><button type="button" onclick="updateCartQuantity(\''+pid+'\',-1)" aria-label="Decrease quantity">−</button><output data-quantity>'+d.quantity+'</output><button type="button" onclick="updateCartQuantity(\''+pid+'\',1)" aria-label="Increase quantity">+</button></div></div>';}
   toast('Added to cart');
@@ -107,6 +119,11 @@ async function updateCartQuantity(pid,delta){
   const d=await r.json();
   if(!d.ok){toast(d.message||'Could not update quantity');return;}
   document.querySelectorAll('.badge').forEach(b=>b.textContent=d.cart_count);
+  const recommendationCards=[...document.querySelectorAll('.recommendation-card')].filter(card=>card.dataset.productId===pid);
+  if(recommendationCards.length&&typeof applyRecommendationCartState==='function'){
+    recommendationCards.forEach(card=>applyRecommendationCartState(card,d.quantity));
+    return;
+  }
   const item=document.querySelector('[data-product-id="'+pid+'"]');
   if(item && d.quantity===0){item.remove();location.reload();return;}
   if(item){item.querySelectorAll('[data-quantity]').forEach(el=>el.textContent=d.quantity);item.querySelectorAll('output').forEach(el=>{el.value=d.quantity;el.textContent=d.quantity;});}

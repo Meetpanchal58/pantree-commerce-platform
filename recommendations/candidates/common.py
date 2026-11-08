@@ -1,0 +1,121 @@
+from pathlib import Path
+import json
+from functools import lru_cache
+
+import pandas as pd
+
+
+ROOT = Path(__file__).resolve().parents[2]
+DATA = ROOT / "data"
+EXCLUDED_STATUSES = {"RTO", "CANCELLED", "REFUNDED", "CIC", "CIR", "LOST", "UNDELIVERED"}
+UNIVERSAL_GENDERS = {"unisex", "all", "all genders", "unisex clothing"}
+
+
+def gender_is_compatible(anchor_gender, candidate_gender) -> bool:
+    """Keep known-gender recommendations within that audience or universal items."""
+    if pd.isna(anchor_gender) or not str(anchor_gender).strip():
+        return True
+    if pd.isna(candidate_gender) or not str(candidate_gender).strip():
+        return False
+    anchor = str(anchor_gender).strip().lower()
+    candidate = str(candidate_gender).strip().lower()
+    aliases = {"male": "men", "female": "women"}
+    anchor = aliases.get(anchor, anchor)
+    candidate = aliases.get(candidate, candidate)
+    return candidate in UNIVERSAL_GENDERS or candidate == anchor
+
+
+@lru_cache(maxsize=1)
+def read_products() -> pd.DataFrame:
+    columns = [
+        "product_id", "product_name", "h1_category", "h2_category",
+        "h3_category", "h4_colour", "brand_name", "gender", "mrp",
+        "current_price", "avg_rating", "review_count", "product_description",
+        "product_attributes", "image_url", "is_active",
+    ]
+    products = pd.read_parquet(DATA / "product_master.parquet", columns=columns)
+    products["product_attributes"] = products["product_attributes"].map(
+        lambda value: json.loads(value) if isinstance(value, str) else {}
+    )
+    return products.drop_duplicates("product_id").set_index("product_id", drop=False)
+
+
+@lru_cache(maxsize=1)
+def read_realized_transactions() -> pd.DataFrame:
+    transactions = pd.read_parquet(
+        DATA / "transactions.parquet",
+        columns=[
+            "customer_id", "product_id", "order_id", "order_timestamp",
+            "order_status", "payment_status", "quantity", "unit_selling_price",
+        ],
+    )
+    status = transactions["order_status"].fillna("").str.upper()
+    transactions = transactions.loc[~status.isin(EXCLUDED_STATUSES)].copy()
+    transactions["order_timestamp"] = pd.to_datetime(
+        transactions["order_timestamp"], errors="coerce"
+    )
+    return transactions.dropna(subset=["customer_id", "product_id", "order_timestamp"])
+
+
+def realized_transactions_ready() -> bool:
+    """Report whether warehouse transactions have been loaded by background warmup."""
+    return read_realized_transactions.cache_info().currsize > 0
+
+
+@lru_cache(maxsize=1)
+def read_stock() -> pd.Series:
+    stock = pd.read_parquet(
+        DATA / "inventory.parquet",
+        columns=["inventory_date", "product_id", "closing_stock"],
+    )
+    stock["inventory_date"] = pd.to_datetime(stock["inventory_date"], errors="coerce")
+    latest_dates = stock.groupby("product_id", sort=False)[
+        "inventory_date"
+    ].transform("max")
+    latest = stock.loc[stock["inventory_date"].eq(latest_dates)].drop_duplicates(
+        "product_id", keep="last"
+    )
+    missing_date_products = stock.loc[latest_dates.isna(), "product_id"].drop_duplicates()
+    if not missing_date_products.empty:
+        missing_date_rows = stock[stock["product_id"].isin(missing_date_products)]
+        latest = pd.concat(
+            [
+                latest,
+                missing_date_rows.drop_duplicates("product_id", keep="last"),
+            ],
+            ignore_index=True,
+        )
+    return latest.set_index("product_id")["closing_stock"]
+
+
+@lru_cache(maxsize=1)
+def read_clickstream_activity() -> pd.DataFrame:
+    """Read the interaction events shared by popularity and ranking features."""
+    events = pd.read_parquet(
+        DATA / "clickstream.parquet",
+        columns=["customer_id", "product_id", "event_type", "event_timestamp"],
+    )
+    events = events[
+        events["event_type"].isin(["pdp_view", "add_to_cart", "wishlist_add"])
+    ].dropna(subset=["customer_id", "product_id", "event_timestamp"]).copy()
+    events["event_timestamp"] = pd.to_datetime(
+        events["event_timestamp"], errors="coerce"
+    )
+    events = events.dropna(subset=["event_timestamp"])
+    events["weight"] = events["event_type"].map(
+        {"pdp_view": 1.0, "add_to_cart": 3.0, "wishlist_add": 2.0}
+    )
+    return events
+
+
+@lru_cache(maxsize=1)
+def read_event_counts() -> tuple[pd.Series, pd.Series]:
+    events = read_clickstream_activity()
+    customer_counts = events.groupby("customer_id").size()
+    product_counts = events.groupby("product_id").size()
+    return customer_counts, product_counts
+
+
+def event_counts_ready() -> bool:
+    """Report whether clickstream ranking features are ready for request-time use."""
+    return read_event_counts.cache_info().currsize > 0
