@@ -99,7 +99,10 @@ use email OTP alone: configure all four SMTP values above, and the sign-in page 
 only when OpenSMS is not configured. A phone's local Wi-Fi address is not reachable from Render;
 do not expose the OpenSMS API or its key publicly. For production, also set
 `PANTREE_RATE_LIMIT_SECRET` to a private random value of at least 32 characters. Do not put real
-passwords or keys in GitHub.
+passwords or keys in GitHub. On a 512 MB instance such as Render's free tier, set
+`PANTREE_HEAVY_RECOMMENDATIONS=0` so the app skips the collaborative-filtering and
+sentence-transformer models, which otherwise exceed the memory limit; recommendations fall back to
+lighter sources.
 See the detailed
 [email and phone sign-in setup](#passwordless-authentication) if you need provider-specific help.
 

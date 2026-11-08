@@ -13,3 +13,5 @@ services:
         value: "3.11.9"
       - key: PANTREE_LIVE_MIRROR
         value: "0"
+      - key: PANTREE_HEAVY_RECOMMENDATIONS
+        value: "0"
