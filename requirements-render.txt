@@ -1,0 +1,16 @@
+# Slim dependency set for small hosts such as Render's free tier.
+# Leaves out sentence-transformers (PyTorch), faiss-cpu and implicit, which are only
+# used when PANTREE_HEAVY_RECOMMENDATIONS=1. Use requirements.txt for the full stack.
+pandas==3.1.0
+numpy==2.4.6
+pyarrow==26.0.0
+fastapi==0.162.0
+uvicorn==0.54.0
+jinja2==3.1.6
+python-multipart==0.0.33
+python-dotenv==1.2.4
+supertokens-python==0.30.4
+httpx==0.28.1
+phonenumbers==9.0.43
+duckdb==2.0.0
+lightgbm==4.7.0
