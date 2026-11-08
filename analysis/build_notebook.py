@@ -90,19 +90,30 @@ monthly = monthly.iloc[:-1] if monthly.index[-1].month == realized["order_timest
 import sys; sys.path.insert(0, str(ROOT / "generators")); import config as C
 fig, ax = plt.subplots()
 for month in monthly.index:
-    if month.strftime("%Y-%m") in C.FESTIVALS:
+    if C.festival_for(month.strftime("%Y-%m"))[0]:
         ax.axvspan(month, month + pd.offsets.MonthEnd(0), color="#eda100", alpha=0.12, lw=0)
 ax.plot(monthly.index, monthly.values / 1e5, color=SERIES[0], marker="o", markersize=4)
 ax.set_title("Monthly realized revenue (₹ lakh)"); ax.set_ylabel("₹ lakh")
 plt.tight_layout(); plt.show()
 best = monthly.idxmax()
 print(f"Best month: {best:%b %Y} (₹{monthly.max()/1e5:.1f} lakh); weakest: {monthly.idxmin():%b %Y} (₹{monthly.min()/1e5:.1f} lakh)")
-covered = sorted(m for m in C.FESTIVALS if m >= monthly.index.min().strftime("%Y-%m"))
-print(f"Festival calendar in generators/config.py covers: {', '.join(covered)}; last configured month {max(C.FESTIVALS)}")
-late = [m for m in monthly.index if m.strftime("%Y-%m") > max(C.FESTIVALS)]
-print(f"{len(late)} months after {max(C.FESTIVALS)} (including Oct-Nov 2025 Diwali) have no festival boost configured.")
-print("A raw festival vs non-festival comparison is therefore misleading: the shop also grows over time,")
-print("so early (festival-flagged) months look weaker. Extending the calendar is listed as a next step.")
+# The shop grows every month, so compare each festival month with the nearest
+# non-festival months before and after it (a local baseline), not the overall average.
+is_fest = [C.festival_for(m.strftime("%Y-%m"))[0] is not None for m in monthly.index]
+uplifts = []
+for i, month in enumerate(monthly.index):
+    if not is_fest[i]:
+        continue
+    before = next((monthly.iloc[j] for j in range(i - 1, -1, -1) if not is_fest[j]), None)
+    after = next((monthly.iloc[j] for j in range(i + 1, len(monthly)) if not is_fest[j]), None)
+    neighbours = [v for v in (before, after) if v is not None]
+    if neighbours:
+        name = C.festival_for(month.strftime("%Y-%m"))[0]
+        uplifts.append((month, name, monthly.iloc[i] / np.mean(neighbours) - 1))
+for month, name, up in uplifts:
+    if "Diwali" in name:
+        print(f"{month:%b %Y} ({name}): {up:+.0%} vs neighbouring normal months")
+print(f"Average festival-month uplift vs neighbouring normal months: {np.mean([u for *_, u in uplifts]):+.0%}")
 """)
 
 md("""

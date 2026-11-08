@@ -63,11 +63,33 @@ COMPLEMENTS = {
     "Perfume and Body Mist": ["Watches", "Handbags"], "Lipstick": ["Handbags"],
 }
 
+# Month -> (festival / sale, demand multiplier). Diwali moves each year: late October in
+# 2025 (20 Oct) and early November in 2026 (8 Nov), so the bigger boost follows it.
 FESTIVALS = {
     "2024-01": ("New Year", 1.15), "2024-03": ("Holi", 1.12), "2024-08": ("Independence Day", 1.15),
     "2024-10": ("Festive/Diwali", 1.55), "2024-11": ("Festive/Diwali", 1.35), "2024-12": ("Year End", 1.20),
     "2025-01": ("Republic Day", 1.18), "2025-03": ("Holi", 1.12), "2025-04": ("Summer Sale", 1.10),
     "2025-05": ("Summer Sale", 1.18), "2025-06": ("End of Season Sale", 1.30),
+    "2025-08": ("Independence Day", 1.15), "2025-10": ("Festive/Diwali", 1.55),
+    "2025-11": ("Festive/Diwali", 1.35), "2025-12": ("Year End", 1.20),
+    "2026-01": ("Republic Day", 1.18), "2026-03": ("Holi", 1.12), "2026-04": ("Summer Sale", 1.10),
+    "2026-05": ("Summer Sale", 1.18), "2026-06": ("End of Season Sale", 1.30),
+    "2026-08": ("Independence Day", 1.15), "2026-10": ("Festive/Diwali", 1.35),
+    "2026-11": ("Festive/Diwali", 1.55), "2026-12": ("Year End", 1.20),
 }
+# Used for any month not listed above, so the calendar never silently runs out.
+FESTIVALS_BY_MONTH = {
+    1: ("Republic Day", 1.18), 3: ("Holi", 1.12), 4: ("Summer Sale", 1.10), 5: ("Summer Sale", 1.18),
+    6: ("End of Season Sale", 1.30), 8: ("Independence Day", 1.15), 10: ("Festive/Diwali", 1.45),
+    11: ("Festive/Diwali", 1.45), 12: ("Year End", 1.20),
+}
+
+
+def festival_for(month_key: str):
+    """(festival name, multiplier) for a 'YYYY-MM' key, with the yearly fallback."""
+    if month_key in FESTIVALS:
+        return FESTIVALS[month_key]
+    return FESTIVALS_BY_MONTH.get(int(month_key[5:7]), (None, 1.0))
+
 
 SHOCK_DATE = "2025-02-01"

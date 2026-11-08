@@ -197,9 +197,10 @@ returns, and stock movements—to `webapp\pantree_analytics.duckdb`. That copy i
 analysis. SQLite remains the live shop's source of truth. The generated Parquet files in `data`
 are the starting practice dataset; they are not rewritten every time someone uses the shop.
 
-Not every screen display is recorded: Pantree does not currently save a separate event for each
-recommendation shown or clicked. If a shopper opens a recommended product, it is saved like any
-other product opening (`pdp_view`), without recording which recommendation row it came from.
+Recommendations are logged separately so they can be measured (see
+[Measuring recommendations on the live site](#measuring-recommendations-on-the-live-site)):
+every served product goes to `recommendation_impressions`, it is marked seen once at least half
+of the card is on screen, and opening it adds a row to `recommendation_clicks`.
 
 ### How the three recommendation rows work
 
@@ -664,6 +665,27 @@ To reproduce: generate with `PANTREE_TODAY=2026-06-30`, then run `python -m reco
 and `python -m recommendations.evaluate`. Absolute numbers are low because the task is predicting
 the exact product out of 10,000; compare orderings with each other, not with published benchmarks.
 
+### Measuring recommendations on the live site
+
+The offline evaluation replays history; the live site also records how shoppers react:
+
+| Table | One row per | Main columns |
+|---|---|---|
+| `recommendation_impressions` | product served in a recommendation row | request id, customer, surface/intent, A/B variant, product, position, source, score, served time, seen time |
+| `recommendation_clicks` | recommended product opened | impression, request id, customer, product, position, click time |
+
+- **Seen** means at least half of the card was on screen (`webapp/static/rec_tracking.js` uses an
+  IntersectionObserver and batches the reports); served-but-never-visible cards don't count.
+- **Clicks** come from recommendation links carrying `?rec=<request id>&pos=<position>`; links that
+  don't match the customer and product are ignored, and each impression counts one click at most.
+- **A/B test:** set `PANTREE_AB_TEST=ranker` to split customers 50/50 by a hash of their ID
+  (stable per customer). `control` sees retrieval order without the ranker; `treatment` sees the ranker.
+- **Report:** `python -m recommendations.online_metrics` writes
+  `recommendations/reports/online_metrics.md` with served/seen/clicks, click-through rate with a
+  95% Wilson interval, add-to-cart within 24 hours and purchase within 7 days of a click, per
+  surface, source and variant, plus the A/B difference bootstrapped by customer (impressions from the
+  same customer are not independent).
+
 To extend an initialized warehouse and explicitly grow the customer population, set
 `PANTREE_TODAY` to the desired end date and `PANTREE_INCREMENT_TARGET_CUSTOMERS` to the desired
 final customer count before running `python generate_data.py --mode increment`. Increment
@@ -718,11 +740,11 @@ and marketing-mix projects.
 ## Honest notes
 - This is **realistic synthetic data** with deliberately engineered, documented signal — it is
   validated and leakage-checked, but it is simulated, not production data.
-- In the simulator, browse-only visits view **random** products, so most clicks carry no taste
-  signal; only purchases reflect customer preferences. This caps what any recommender can learn
-  and is why purchases are weighted most heavily.
-- The evaluation is an offline replay on historical orders, not a live A/B test; the site does
-  not yet log which recommendations were shown or clicked.
+- Browsing in the simulator follows each customer's hidden taste with 20% exploration, so views
+  and cart adds carry preference signal; the strength of that signal is a modelling choice.
+- The headline evaluation is an offline replay on historical orders. The site now logs
+  recommendation impressions and clicks and supports an A/B split, but those numbers need real
+  traffic, which the demo does not have yet.
 - Product images source from a real fashion catalogue (`generators/product_details.csv`);
   for the live site, images are served locally so they always load.
 
