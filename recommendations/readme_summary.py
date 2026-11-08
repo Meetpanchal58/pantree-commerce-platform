@@ -97,7 +97,10 @@ def build_eval(report: dict) -> str:
         verdict = "significant" if c["ci_low"] > 0 or c["ci_high"] < 0 else "not significant"
         lines.append(f"- {name.replace('_vs_', ' vs ').replace('_', ' ')}: {c['mean_diff']:+.4f} "
                      f"(95% CI {c['ci_low']:+.4f} to {c['ci_high']:+.4f}, {verdict})")
-    lines += ["", "Retrieval (is a bought product in the candidate list at all?):", ""]
+    lines += ["", "Retrieval (is a bought product in the candidate list at all?). Per-source figures use each source's "
+              f"full list; the combined candidate list keeps only {report['settings']['per_source']} per source, which is "
+              "why one source alone can exceed the combined figure (and why keeping more ALS candidates is a cheap "
+              "retrieval improvement to try):", ""]
     for name, hits in sorted(ret["source_hits"].items(), key=lambda x: -x[1]):
         lines.append(f"- {name}: {hits / ret['queries']:.1%} of test orders")
     lines += [

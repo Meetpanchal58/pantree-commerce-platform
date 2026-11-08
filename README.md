@@ -5,6 +5,17 @@ passwordless sign-in, and a hybrid recommender evaluated against baselines and a
 leads with results; setup is under [How to run](#how-to-run).
 
 <!-- RESULTS:START -->
+## Results at a glance
+
+*Generated from `recommendations/reports/evaluation_report.json` by `python -m recommendations.readme_summary`.*
+
+- **Problem:** rank products for the home-page "Recommended for you" row, predicting the exact product bought among 10,000, using only data known one hour before the order.
+- **Method:** 5 retrieval sources (implicit ALS, trending, recent activity, FAISS content similarity, co-purchase) → 11-feature LightGBM LambdaRank → segment-aware policy (popularity for first-time buyers).
+- **Evaluation:** 3-period temporal split, 7-day embargo, 5,433 held-out orders (of 5,633; see order counts below), paired-bootstrap 95% CIs.
+- **Headline:** served policy NDCG@10 0.0308 vs 0.0224 for retrieval order: +0.0083 absolute (95% CI +0.0059 to +0.0107), +37% relative (95% CI +25% to +51%); 4.4× random. Within lists that contain a bought product (757 orders), NDCG@10 is 0.248.
+- **Ceiling:** the served policy captures 72% of the achievable gain from random to an oracle that knows each customer's true taste (95% CI 61% to 83%).
+- **Bottleneck:** candidate lists contain a bought product for 13.6% of orders; the top 100 by true taste would contain one for 38.8%. Next step: better retrieval (taste-aware candidate generation, e.g. a two-tower model), not more ranking features.
+- **Caveat:** synthetic data with known ground truth; online impression/click logging and an A/B split are built, but there is no real traffic yet.
 <!-- RESULTS:END -->
 
 ### [Live Demo](https://pantree-storefront.onrender.com/login)
@@ -122,6 +133,45 @@ products the customer actually bought near the top?** That is the job of the hom
 ### Results (default dataset)
 
 <!-- EVAL:START -->
+*Generated from `recommendations/reports/evaluation_report.json`; full detail in [`evaluation_report.md`](recommendations/reports/evaluation_report.md).*
+
+End-to-end NDCG@10 (every held-out order with a new product; a bought product missing from the candidate list counts as a miss), and the share of the random → oracle gap each ordering captures:
+
+| Ordering | All (5,433) | First-time buyers (1,495) | Repeat buyers (3,938) | Ranking-only, all | Share of achievable gain |
+|---|---|---|---|---|---|
+| Random order | 0.0071 | 0.0035 | 0.0084 | 0.059 | – |
+| Popularity | 0.0139 | 0.0197 | 0.0117 | 0.111 | 21% (13% to 27%) |
+| Retrieval score (previous production) | 0.0224 | 0.0111 | 0.0267 | 0.180 | 46% (37% to 56%) |
+| Old ranker (3 features) | 0.0043 | 0.0012 | 0.0055 | 0.038 | -8% (-15% to -3%) |
+| New ranker (11 features) | 0.0307 | 0.0201 | 0.0347 | 0.248 | 71% (60% to 84%) |
+| Production blend (50/50) | 0.0314 | 0.0220 | 0.0350 | 0.253 | 73% (63% to 85%) |
+| **Segment-aware (served)** | 0.0308 | 0.0197 | 0.0350 | 0.248 | 72% (61% to 83%) |
+| Oracle (true taste, not deployable) | 0.0402 | 0.0375 | 0.0412 | 0.337 | – |
+
+Paired bootstrap over orders (end-to-end NDCG@10):
+
+- new ranker vs retrieval: +0.0083 (95% CI +0.0053 to +0.0111, significant)
+- new ranker vs popularity: +0.0168 (95% CI +0.0140 to +0.0197, significant)
+- new ranker vs legacy ranker: +0.0264 (95% CI +0.0227 to +0.0303, significant)
+- new ranker vs random: +0.0236 (95% CI +0.0198 to +0.0275, significant)
+- segment aware vs retrieval: +0.0083 (95% CI +0.0059 to +0.0107, significant)
+- segment aware vs popularity: +0.0169 (95% CI +0.0143 to +0.0196, significant)
+- segment aware vs production blend: -0.0006 (95% CI -0.0016 to +0.0003, not significant)
+
+Retrieval (is a bought product in the candidate list at all?). Per-source figures use each source's full list; the combined candidate list keeps only 20 per source, which is why one source alone can exceed the combined figure (and why keeping more ALS candidates is a cheap retrieval improvement to try):
+
+- collaborative: 15.2% of test orders
+- recent_activity: 5.5% of test orders
+- trending: 5.3% of test orders
+- content: 4.5% of test orders
+- fbt: 2.7% of test orders
+- all sources combined (candidate list of up to 100): 13.6%; **retrieval ceiling** (top 100 of all eligible products by true taste): 38.8%
+
+Order counts: 5,633 paid orders in the test period. 26 came from customers with no earlier activity and are dropped by a known feature-building issue (pandas drops groups with a missing history anchor; left unchanged so results stay comparable). 174 only re-bought earlier products (excluded from candidates), leaving 5,433 for the end-to-end tables. 764 had a bought product in the list (7 of them no-history orders); ranking-only tables also need at least 10 candidates and one not-bought candidate (0 + 0 dropped), leaving 757.
+
+Ranker features with the most gain: `log_product_popularity` (21%), `n_sources` (17%), `retrieval_score` (13%), `source_id` (13%), `log_price_ratio` (11%).
+
+ALS tuning (`python -m recommendations.tune_als`, chosen on the validation period, checked once on the test period): best 32 factors, regularisation 1.0, weights (view, cart, purchase) (1, 3, 5); held-out Recall@20 0.0959 (original 48 factors, 1/3/5) → 0.0975. Serving currently uses 32 factors, regularisation 0.01, weights (0.5, 3.0, 8.0). Full grid: [`als_tuning.md`](recommendations/reports/als_tuning.md).
 <!-- EVAL:END -->
 
 To reproduce: generate with `PANTREE_TODAY=2026-06-30`, then run `python -m recommendations.tune_als`,
@@ -178,10 +228,15 @@ customers or products.
 
 ## Validation
 - `validators/validate_dataset.py` — cross-table integrity, temporal order, funnel ordering,
-  reconciliation, no-sale-before-launch, and churn-leakage checks.
+  reconciliation, no-sale-before-launch, and churn-leakage checks, including a point-in-time check
+  that every churn feature row counts only orders before its `snapshot_date` (added after this
+  check would have caught a real leak; see Data analysis).
 - `validators/preflight_checks.py` — the above **plus** a churn model-readiness smoke test
-  (base rate + leakage-safe AUC + top-decile lift), so labels can't silently drift to an
-  unmodelable rate.
+  (base rate + AUC band + top-decile lift), so labels can't silently drift to an unmodelable
+  rate. It uses a random split as a quick smoke test; the notebook's churn model uses a temporal
+  split with an embargo.
+- The evaluation's oracle depends on `generators/taste.py`, the simulator's own scoring function;
+  regenerating with the default seed reproduces `transactions.parquet` byte for byte.
 
 ## Data analysis
 
@@ -189,6 +244,17 @@ customers or products.
 `pip install -r requirements-analysis.txt` then `python analysis/build_notebook.py`. Findings on the default dataset:
 
 <!-- INSIGHTS:START -->
+*Generated from `analysis/insights_summary.json`, written when the notebook runs.*
+
+- **Conversion:** 3.2% of 821,728 sessions end in a purchase; 10% of cart adds are bought.
+- **Cash on delivery:** 6.4% of COD parcels come back undelivered (RTO) vs 2.6% for prepaid (2.5×).
+- **Returns:** 17.0% of delivered items are returned (footwear 19.7%, accessories 12.5%); size and fit problems explain 40% of returns.
+- **Channels:** a Referral customer is worth ₹4,425 on average vs ₹1,534 for Social Ads (2.9×).
+- **Repeat buyers:** 56% of buyers order again and bring 83% of revenue.
+- **Price change:** after 1 Feb 2025 customers paid +8.6% relative to list price.
+- **Festivals:** Diwali months show Oct 2025 +83%, Nov 2025 +75% revenue vs the neighbouring normal months (festival months overall +39%); comparing with neighbours controls for the shop's growth.
+- **Churn model:** on the latest held-out snapshots (temporal split, 90-day embargo), logistic regression (chosen on validation) reaches ROC-AUC 0.605 (95% CI 0.590–0.620) vs 0.545 for a days-since-last-order rule; targeting the top 10% catches 12% of churners at 1.2× the base rate (56%). Weak, but leakage-free.
+- **Leak found and fixed:** the generator's monthly churn features used to count the whole snapshot month, i.e. orders after `snapshot_date` (26,729 of 567,540 rows). Trained on them, gradient boosting reported test AUC 0.751 vs 0.580 without the leak. Features are now built strictly before the snapshot (0 leaky rows now), and `validators/validate_dataset.py` fails if that ever regresses.
 <!-- INSIGHTS:END -->
 
 The generated warehouse can also support RFM, customer lifetime value, churn (labels included)
