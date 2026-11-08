@@ -145,9 +145,12 @@ Or activate `.venv` first and run `python -m uvicorn app:app --reload`.
 
 ### 6. Try the shop
 
-1. Enter your email address or phone number on the login page.
-2. Enter the code you receive. Returning shoppers are matched by the verified email or phone; a
-   new customer profile is created only after the code is verified.
+1. New shoppers open **Create account**, fill in their details (name, email, optional mobile, city,
+   optional gender, age range and "how did you hear about us", marketing choices, and terms) and
+   verify the code sent to their email. The account is created only after the code is verified.
+   Signing up again with the same email or mobile shows "An account with this email already exists".
+2. Returning shoppers use **Sign in** with their email or mobile and the code they receive. Sign-in
+   never creates an account; an unknown email shows "No account found. Create an account first".
 3. Browse departments, search, open a product, add products to your cart or wishlist, and try a
    checkout.
 4. Visit **Your Orders** to mark the demo order delivered or cancel it. After marking it
@@ -166,7 +169,9 @@ or time spent on a page.
 
 | What the shopper does | What Pantree saves |
 |---|---|
-| Signs in successfully | A profile in `customers` (if needed), an email login record in `auth` when an email is used, the sign-in link in `supertokens_customers`, a local session in `sessions`, and an `app_open` event. The verified phone is stored on the customer profile. SuperTokens also stores the sign-in identity and session. |
+| Creates an account | Non-personal profile in `customers` (signup date, city/state/region, gender, age range, acquisition channel, marketing opt-ins, terms acceptance time); personal details in `customer_pii` (name, verified email, mobile); the sign-in link in `supertokens_customers`. Details wait in `pending_signups` until the code is verified (expires after 30 minutes). |
+| Signs in successfully | The sign-in link in `supertokens_customers` (first time on a device identity), a local session in `sessions`, and an `app_open` event. SuperTokens also stores the sign-in identity and session. |
+| Places an order | The delivery address is saved to `customer_pii` for the next checkout. |
 | Opens the home page | A `page_view` event in `clickstream`. |
 | Opens a category or browse page | A `category_view` event in `clickstream`. Filter and sort changes are not currently saved as separate events. |
 | Searches | A `search` event and the search text in `clickstream`. |
@@ -296,10 +301,27 @@ You do not need to understand the technical terms to try the local shop.
 ### Passwordless authentication
 
 The storefront uses the SuperTokens Passwordless recipe and Session recipe for email-or-phone
-OTP sign-up, login, refresh, and logout. New Pantree customer rows are created only after the
-SuperTokens OTP is verified; existing customers are matched by the verified email or phone.
+OTP sign-up, login, refresh, and logout. Sign-up and sign-in are separate flows: sign-up
+(`POST /signup/otp/request`) collects profile details, rejects an email or mobile that already
+has an account, and creates the customer only after the code is verified; sign-in
+(`POST /login/otp/request`) sends a code only to existing accounts and never creates one.
 SQLite continues to own Pantree profiles, carts, and orders, while SuperTokens Core stores
 authentication/session data in PostgreSQL.
+
+#### Customer data and personal information
+
+Customer data is split into two SQLite tables joined by `customer_id`:
+
+| Table | Holds | Copied to DuckDB analytics? |
+|---|---|---|
+| `customers` (customer dimension) | signup date, city/state/region, gender, age range, acquisition channel, Prime status, email/SMS opt-in, account status, terms acceptance time | Yes |
+| `customer_pii` (personal data) | first and last name, verified email, mobile, saved delivery address | **No** |
+
+Analysis and recommendation code only needs the dimension, so names, emails, phone numbers and
+addresses never leave the live database. Older databases are migrated automatically on start-up:
+personal columns are moved out of `customers` (and emails out of the legacy `auth` table) into
+`customer_pii`. Telling a visitor that an email "already exists" or "has no account" reveals
+whether it is registered; the OTP rate limits (applied before that check) throttle bulk probing.
 
 #### Sign-in and access control
 
@@ -311,8 +333,9 @@ codes. The supplied Compose configurations set a five-minute lifetime and allow 
 attempts per code. Resend requests create a new code and are throttled along with initial
 requests.
 
-After successful verification, Pantree links the verified SuperTokens identity to the matching
-existing customer by verified email or phone, or creates a new customer if none matches. The
+After successful verification, Pantree either creates the new customer from the saved sign-up
+details or, for sign-in, links the verified SuperTokens identity to the existing customer with
+that verified email or phone (a code verified for an unknown contact creates nothing). The
 app then creates a SuperTokens session and a local session-to-customer mapping. The browser
 receives an HttpOnly `sid` cookie; it is Secure for HTTPS, uses SameSite=Lax, and has a seven-day
 maximum age. Invalid or expired sessions are rejected, and an expired access session is refreshed

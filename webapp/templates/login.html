@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sign in · Pantree</title>
+<title>Sign in or create an account · Pantree</title>
 <style>
 :root{--ink:#17312d;--muted:#6c7d77;--line:#dce9e2;--forest:#123c36;--coral:#e47759;--gold:#e8b657;--paper:#fff;--canvas:#f4f8f5}
 *{box-sizing:border-box}
@@ -40,7 +40,12 @@ body{font-family:Inter,"Segoe UI",Arial,sans-serif;color:var(--ink);background:r
 .text-button:disabled{color:#9aa8a2;cursor:default}
 .security-note{display:flex;gap:9px;align-items:flex-start;color:var(--muted);font-size:12px;line-height:1.5;margin-top:20px}
 .security-note span{color:var(--forest);font-size:16px}
-@media(max-width:760px){body{padding:12px}.auth-shell{display:block;border-radius:18px}.auth-intro{padding:24px 28px}.auth-intro h1{font-size:30px;margin:28px 0 9px}.auth-intro p{font-size:13px}.auth-note{margin-top:12px}.auth-form{padding:26px 22px}.box form{max-height:none}}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}
+.optional{color:#9aa8a2;font-weight:600;text-transform:none;letter-spacing:0}
+.consents{margin-top:14px}.consents label{margin:8px 0}
+.box a{color:var(--forest);font-weight:700}
+#auth-action{display:block;margin:-6px 0 14px}
+@media(max-width:760px){.row2{grid-template-columns:1fr}body{padding:12px}.auth-shell{display:block;border-radius:18px}.auth-intro{padding:24px 28px}.auth-intro h1{font-size:30px;margin:28px 0 9px}.auth-intro p{font-size:13px}.auth-note{margin-top:12px}.auth-form{padding:26px 22px}.box form{max-height:none}}
 </style>
 </head>
 <body>
@@ -84,11 +89,12 @@ body{font-family:Inter,"Segoe UI",Arial,sans-serif;color:var(--ink);background:r
       </div>
       {% if msg %}<div class="msg" role="alert">{{ msg }}</div>{% endif %}
       <div id="auth-message" class="msg" role="status" aria-live="polite" hidden></div>
+      <button id="auth-action" class="text-button" type="button" hidden></button>
 
       <section id="login">
         <div id="identifier-step">
           <h2>Welcome back</h2>
-          <p class="auth-subtitle">Sign in or create an account with a one-time code sent to your {{ channel_description }}.</p>
+          <p class="auth-subtitle">Sign in with a one-time code sent to your {{ channel_description }}. New here? <a href="#" onclick="show('signup');return false;">Create an account</a>.</p>
           {% if not email_enabled and not phone_enabled %}
           <div class="msg" role="alert">Sign-in is temporarily unavailable. Please try again later.</div>
           {% endif %}
@@ -124,11 +130,55 @@ body{font-family:Inter,"Segoe UI",Arial,sans-serif;color:var(--ink);background:r
 
       <section id="signup" style="display:none">
         <h2>Create your account</h2>
-        <p class="auth-subtitle">Verify your {{ channel_description }} to create your Pantree account.</p>
-        <label for="signup-identifier">{{ contact_label }}</label>
-        <input id="signup-identifier" type="{{ contact_type }}" autocomplete="email" inputmode="{{ contact_mode }}" placeholder="{{ contact_examples }}" {% if not email_enabled and not phone_enabled %}disabled{% endif %}>
-        <button class="btn" type="button" onclick="requestCode()" {% if not email_enabled and not phone_enabled %}disabled{% endif %}>Continue with OTP</button>
-        <small>Your account will be created after you verify the code.</small>
+        <p class="auth-subtitle">Tell us a little about yourself. We'll send a one-time code to verify your {% if email_enabled %}email{% else %}mobile number{% endif %}, and create your account once it's confirmed.</p>
+        {% if not email_enabled and not phone_enabled %}
+        <div class="msg" role="alert">Sign-up is temporarily unavailable. Please try again later.</div>
+        {% endif %}
+        <form id="signup-form" novalidate>
+          <div class="row2">
+            <div><label for="signup-first-name">First name</label>
+              <input id="signup-first-name" name="first_name" autocomplete="given-name" maxlength="60" required></div>
+            <div><label for="signup-last-name">Last name <span class="optional">(optional)</span></label>
+              <input id="signup-last-name" name="last_name" autocomplete="family-name" maxlength="60"></div>
+          </div>
+          <label for="signup-identifier">Email address</label>
+          <input id="signup-identifier" name="email" type="email" autocomplete="email" placeholder="you@example.com" required>
+          <label for="signup-phone">Mobile number {% if email_enabled %}<span class="optional">(optional)</span>{% endif %}</label>
+          <input id="signup-phone" name="phone" type="tel" autocomplete="tel" inputmode="tel" placeholder="98765 43210 or +91 98765 43210" {% if not email_enabled %}required{% endif %}>
+          <label for="signup-city">City</label>
+          <select id="signup-city" name="city" required>
+            <option value="">Choose your city</option>
+            {% for city, (state, region) in cities.items()|sort %}<option value="{{ city }}">{{ city }}, {{ state }}</option>{% endfor %}
+            <option value="Other">Other city</option>
+          </select>
+          <div class="row2">
+            <div><label for="signup-gender">Gender <span class="optional">(optional)</span></label>
+              <select id="signup-gender" name="gender">
+                {% for value, label in genders.items() %}<option value="{{ value }}" {% if value == "Prefer not to say" %}selected{% endif %}>{{ label }}</option>{% endfor %}
+              </select></div>
+            <div><label for="signup-age">Age range <span class="optional">(optional)</span></label>
+              <select id="signup-age" name="age_bracket">
+                <option value="">Prefer not to say</option>
+                {% for bracket in age_brackets %}<option>{{ bracket }}</option>{% endfor %}
+              </select></div>
+          </div>
+          <label for="signup-heard">How did you hear about us? <span class="optional">(optional)</span></label>
+          <select id="signup-heard" name="heard_from">
+            <option value="">Choose one</option>
+            {% for value, label in heard_from_choices.items() %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+          </select>
+          <label for="signup-device">Device</label>
+          <select id="signup-device" name="device">
+            <option>Desktop Web</option><option>Android App</option><option>iOS App</option><option>Mobile Web</option>
+          </select>
+          <div class="consents">
+            <label><input type="checkbox" name="email_opt_in" value="1">Email me offers and new arrivals</label>
+            <label><input type="checkbox" name="sms_opt_in" value="1">Text me offers and order updates</label>
+            <label><input type="checkbox" id="signup-terms" name="accept_terms" value="1" required>I agree to the terms of use and privacy policy</label>
+          </div>
+          <button class="btn" type="submit" {% if not email_enabled and not phone_enabled %}disabled{% endif %}>Create account and send code</button>
+          <small>Your account is created only after you verify the code. Already have one? <a href="#" onclick="show('login');return false;">Sign in</a>.</small>
+        </form>
       </section>
     </div>
   </section>
@@ -140,6 +190,8 @@ const authMessage=document.getElementById("auth-message");
 const resendButton=document.getElementById("resend-code");
 const identifierField=document.getElementById("identifier");
 const signupIdentifierField=document.getElementById("signup-identifier");
+const signupForm=document.getElementById("signup-form");
+const authAction=document.getElementById("auth-action");
 const phoneEnabled={{ phone_enabled|tojson }};
 let activeAuthView="login";
 let resendTimer;
@@ -157,6 +209,18 @@ function show(view){
   document.getElementById("tl").classList.toggle("active",isLogin);
   document.getElementById("ts").classList.toggle("active",!isLogin);
   authMessage.hidden=true;
+  authAction.hidden=true;
+}
+function offerSwitch(code,contact){
+  // "Already exists" sends people to sign in; "not found" sends them to sign up.
+  if(code==="account_exists"){
+    authAction.textContent="Sign in instead →";
+    authAction.onclick=()=>{show("login");if(contact&&contact.includes("@"))identifierField.value=contact;identifierField.focus();};
+  }else if(code==="account_not_found"){
+    authAction.textContent="Create an account →";
+    authAction.onclick=()=>{show("signup");if(contact&&contact.includes("@"))signupIdentifierField.value=contact;document.getElementById("signup-first-name").focus();};
+  }else{authAction.hidden=true;return;}
+  authAction.hidden=false;
 }
 function setMessage(message,success=false){
   authMessage.textContent=message;
@@ -192,9 +256,11 @@ function startResendTimer(seconds=30){
 async function requestCode(resend=false){
   const button=resend||activeAuthView==="login"
     ?requestForm.querySelector("button[type=submit]")
-    :document.querySelector("#signup .btn");
+    :signupForm.querySelector("button[type=submit]");
   const identifier=(activeAuthView==="login"?identifierField:signupIdentifierField).value.trim();
   if(!resend&&!identifier){(activeAuthView==="login"?identifierField:signupIdentifierField).focus();return;}
+  if(!resend&&activeAuthView==="signup"&&!signupForm.reportValidity())return;
+  authAction.hidden=true;
   const requestedView=activeAuthView;
   const originalButtonText=button.textContent;
   button.disabled=true;
@@ -213,16 +279,21 @@ async function requestCode(resend=false){
     setMessage("Sending your sign-in code…",true);
   }
   try{
-    const body=new FormData();
-    const url=resend?"/login/otp/resend":"/login/otp/request";
+    const signingUp=!resend&&requestedView==="signup";
+    const body=signingUp?new FormData(signupForm):new FormData();
+    const url=resend?"/login/otp/resend":signingUp?"/signup/otp/request":"/login/otp/request";
     if(resend)body.append("device_id",document.getElementById("device-id").value);
-    else{
+    else if(!signingUp){
       body.append("identifier",identifier);
       body.append("device",document.getElementById("device").value);
     }
     const response=await fetch(url,{method:"POST",body});
     const result=await readApiResponse(response);
-    if(!response.ok)throw new Error(result.message||"Unable to send a sign-in code.");
+    if(!response.ok){
+      const error=new Error(result.message||"Unable to send a sign-in code.");
+      error.code=result.code;
+      throw error;
+    }
     document.getElementById("device-id").value=result.device_id;
     document.getElementById("pre-auth-session-id").value=result.pre_auth_session_id;
     document.getElementById("verify-submit").disabled=false;
@@ -230,7 +301,7 @@ async function requestCode(resend=false){
       show(requestedView);
       document.getElementById("identifier-step").hidden=true;
       document.getElementById("code-step").hidden=false;
-      document.getElementById("verify-device").value=document.getElementById("device").value;
+      document.getElementById("verify-device").value=(requestedView==="signup"?document.getElementById("signup-device"):document.getElementById("device")).value;
     }
     document.getElementById("login").style.display="block";
     document.getElementById("signup").style.display="none";
@@ -245,12 +316,14 @@ async function requestCode(resend=false){
       document.getElementById("verify-submit").disabled=false;
     }
     setMessage(error.message||"Unable to send a sign-in code.");
+    offerSwitch(error.code,identifier);
   }finally{
     button.textContent=originalButtonText;
     button.disabled=false;
   }
 }
 requestForm.addEventListener("submit",event=>{event.preventDefault();requestCode();});
+signupForm.addEventListener("submit",event=>{event.preventDefault();requestCode();});
 verifyForm.addEventListener("submit",async event=>{
   event.preventDefault();
   const button=verifyForm.querySelector("button[type=submit]");
@@ -265,10 +338,15 @@ verifyForm.addEventListener("submit",async event=>{
       body:new FormData(verifyForm)
     });
     const result=await readApiResponse(response);
-    if(!response.ok)throw new Error(result.message||"Unable to verify that code.");
+    if(!response.ok){
+      const error=new Error(result.message||"Unable to verify that code.");
+      error.code=result.code;
+      throw error;
+    }
     location.assign(result.redirect_url||"/");
   }catch(error){
     setMessage(error.message||"Unable to verify that code.");
+    offerSwitch(error.code,"");
     document.getElementById("otp-code").focus();
   }finally{
     button.textContent=originalButtonText;

@@ -94,8 +94,15 @@ def mirror_event(row: dict):
     mirror_rows("clickstream", pd.DataFrame([row]))
 
 
+# Identifying fields stay in SQLite's customer_pii table and are never mirrored.
+PII_FIELDS = {
+    "first_name", "last_name", "email", "phone", "home_address_line1",
+    "home_address_line2", "home_postal_code", "home_country",
+}
+
+
 def mirror_customer(row: dict):
-    mirror_rows("customers", pd.DataFrame([row]))
+    mirror_rows("customers", pd.DataFrame([{k: v for k, v in row.items() if k not in PII_FIELDS}]))
 
 
 def mirror_order(row: dict):

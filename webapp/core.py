@@ -5,7 +5,7 @@ SQLite is the live OLTP source of truth. Every user activity is written to SQLit
 and mirrored to DuckDB for analytics/model training.
 """
 
-import asyncio, json, logging, os, re, sqlite3, sys, uuid
+import asyncio, json, logging, os, re, sqlite3, sys, time, uuid
 
 import datetime as dt
 
@@ -98,6 +98,8 @@ load_dotenv(ROOT / ".env")
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from generators.config import GEO  # cities/states/regions for the sign-up form
+
 from recommendations.serve import (
     recommend as ml_recommend,
     warm_homepage_caches,
@@ -152,20 +154,29 @@ def uid(p):
     return f"{p}_{uuid.uuid4().hex[:12]}"
 
 
+# Personal (identifying) customer fields live in customer_pii, never in the
+# customers dimension, so analytics copies of `customers` carry no PII.
+PII_COLUMNS = (
+    "first_name", "last_name", "phone", "home_address_line1",
+    "home_address_line2", "home_postal_code", "home_country",
+)
+CUSTOMER_DIM_COLUMNS = {
+    "signup_city": "TEXT",
+    "signup_state": "TEXT",
+    "signup_region": "TEXT",
+    "age_bracket": "TEXT",
+    "acquisition_campaign": "TEXT",
+    "terms_accepted_at": "TEXT",
+}
+
+
 def _ensure_customer_schema(con):
-    columns = {
-        "first_name": "TEXT",
-        "last_name": "TEXT",
-        "phone": "TEXT",
-        "home_address_line1": "TEXT",
-        "home_address_line2": "TEXT",
-        "home_postal_code": "TEXT",
-        "home_country": "TEXT",
-    }
     existing = {row[1] for row in con.execute("PRAGMA table_info(customers)")}
-    for name, kind in columns.items():
-        if name not in existing:
-            con.execute(f"ALTER TABLE customers ADD COLUMN {name} {kind}")
+    if existing:
+        for name, kind in CUSTOMER_DIM_COLUMNS.items():
+            if name not in existing:
+                con.execute(f"ALTER TABLE customers ADD COLUMN {name} {kind}")
+    ensure_customer_pii(con)
     (
         con.execute("ALTER TABLE transactions ADD COLUMN ship_address_line1 TEXT")
         if "ship_address_line1"
@@ -275,8 +286,77 @@ def ensure_sessions(con):
     con.commit()
 
 
+def ensure_customer_pii(con):
+    """Create customer_pii / pending_signups and move legacy PII out of customers.
+
+    Idempotent and cheap once migrated: it only copies rows that still have
+    personal data in `customers` or an email in the legacy `auth` table.
+    """
+    con.execute("""CREATE TABLE IF NOT EXISTS customer_pii (
+            customer_id TEXT PRIMARY KEY,
+            first_name TEXT, last_name TEXT,
+            email TEXT UNIQUE, phone TEXT UNIQUE,
+            home_address_line1 TEXT, home_address_line2 TEXT,
+            home_postal_code TEXT, home_country TEXT,
+            created_at TEXT, updated_at TEXT
+        )""")
+    con.execute("""CREATE TABLE IF NOT EXISTS pending_signups (
+            device_id TEXT PRIMARY KEY,
+            payload TEXT NOT NULL,
+            created_at REAL NOT NULL
+        )""")
+    tables = {row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    customer_columns = {row[1] for row in con.execute("PRAGMA table_info(customers)")} if "customers" in tables else set()
+    legacy = [c for c in PII_COLUMNS if c in customer_columns]
+    if legacy:
+        rows = con.execute(
+            f"SELECT customer_id, {', '.join(legacy)} FROM customers "
+            f"WHERE {' OR '.join(f'{c} IS NOT NULL' for c in legacy)}"
+        ).fetchall()
+        for row in rows:
+            customer_id, values = row[0], dict(zip(legacy, tuple(row)[1:]))
+            con.execute(
+                "INSERT OR IGNORE INTO customer_pii (customer_id, created_at) VALUES (?, ?)",
+                (customer_id, now()),
+            )
+            for column, value in values.items():
+                if value in (None, ""):
+                    continue
+                try:
+                    con.execute(
+                        f"UPDATE customer_pii SET {column}=? WHERE customer_id=? AND {column} IS NULL",
+                        (value, customer_id),
+                    )
+                except sqlite3.IntegrityError:
+                    logger.warning("Skipped a duplicate %s while migrating customer PII", column)
+        for column in legacy:
+            try:
+                con.execute(f"ALTER TABLE customers DROP COLUMN {column}")
+            except sqlite3.OperationalError:
+                con.execute(f"UPDATE customers SET {column}=NULL")
+    if "auth" in tables:
+        for customer_id, email in con.execute(
+            """SELECT a.customer_id, a.email FROM auth a
+               LEFT JOIN customer_pii p USING(customer_id)
+               WHERE a.email IS NOT NULL AND (p.customer_id IS NULL OR p.email IS NULL)"""
+        ).fetchall():
+            con.execute(
+                "INSERT OR IGNORE INTO customer_pii (customer_id, created_at) VALUES (?, ?)",
+                (customer_id, now()),
+            )
+            try:
+                con.execute(
+                    "UPDATE customer_pii SET email=? WHERE customer_id=? AND email IS NULL",
+                    (email.strip().lower(), customer_id),
+                )
+            except sqlite3.IntegrityError:
+                logger.warning("Skipped a duplicate email while migrating customer PII")
+    con.commit()
+
+
 def ensure_auth_tables(con):
     ensure_sessions(con)
+    _ensure_customer_schema(con)  # dimension columns + customer_pii
     con.execute("""CREATE TABLE IF NOT EXISTS supertokens_customers (
             supertokens_user_id TEXT PRIMARY KEY,
             customer_id TEXT NOT NULL,
@@ -451,7 +531,7 @@ def _price_range_bounds(value):
 
 def base_ctx(con, s, request, prods=None, cats=None, title="Pantree", heading=None):
     customer = con.execute(
-        "SELECT first_name FROM customers WHERE customer_id=?", (s["customer_id"],)
+        "SELECT first_name FROM customer_pii WHERE customer_id=?", (s["customer_id"],)
     ).fetchone()
     cart_quantities = {
         row["product_id"]: row["quantity"]

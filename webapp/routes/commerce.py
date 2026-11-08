@@ -231,7 +231,7 @@ def checkout_page(request: Request, sid: str = Cookie(None), msg: str = ""):
         for r in items
     )
     address = con.execute(
-        "SELECT * FROM customers WHERE customer_id=?", (s["customer_id"],)
+        "SELECT * FROM customer_pii WHERE customer_id=?", (s["customer_id"],)
     ).fetchone()
     ctx = base_ctx(con, s, request, cats=_departments(con), title="Checkout")
     ctx.update({"items": items, "total": total, "msg": msg, "address": address})
@@ -452,6 +452,12 @@ def checkout(
         ts,
     )
     con.execute("INSERT INTO orders VALUES (?,?,?,?,?,?,?,?,?)", order_vals)
+    # Remember the delivery address (personal data, so it lives in customer_pii).
+    con.execute(
+        """UPDATE customer_pii SET home_address_line1=?, home_address_line2=?,
+               home_postal_code=?, home_country=?, updated_at=? WHERE customer_id=?""",
+        (address_line1, address_line2, postal_code, country, ts, cid),
+    )
     mirror_order(
         dict(
             zip(
