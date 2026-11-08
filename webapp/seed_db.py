@@ -85,6 +85,8 @@ def main():
     );
     CREATE INDEX IF NOT EXISTS ix_click_cust ON clickstream(customer_id);
     CREATE INDEX IF NOT EXISTS ix_click_session ON clickstream(session_id);
+    CREATE INDEX IF NOT EXISTS ix_click_customer_recent_product
+        ON clickstream(customer_id,event_timestamp DESC,product_id);
     CREATE INDEX IF NOT EXISTS ix_txn_cust ON transactions(customer_id);
     CREATE INDEX IF NOT EXISTS ix_txn_order ON transactions(order_id);
     CREATE INDEX IF NOT EXISTS ix_orders_cust ON orders(customer_id);

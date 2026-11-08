@@ -5,6 +5,7 @@ from datetime import date
 
 SEED = int(os.getenv("PANTREE_SEED", "42"))
 N_CUSTOMERS = int(os.getenv("PANTREE_CUSTOMERS", "30000"))
+INCREMENT_TARGET_CUSTOMERS = int(os.getenv("PANTREE_INCREMENT_TARGET_CUSTOMERS", "0"))
 N_PRODUCTS = int(os.getenv("PANTREE_PRODUCTS", "10000"))
 N_SELLERS = int(os.getenv("PANTREE_SELLERS", "400"))
 
@@ -41,6 +42,8 @@ EVENT_TYPES = ["session_start", "home_view", "category_view", "search", "plp_vie
 # Canonical article-type relationships. Only relationships whose target exists in the catalog are used.
 COMPLEMENTS = {
     "Tshirts": ["Jeans", "Track Pants", "Casual Shoes", "Caps"],
+    "Night suits": ["Lounge Pants", "Lounge Tshirts", "Robe", "Bath Robe", "Flip Flops"],
+    "Nightdress": ["Robe", "Bath Robe", "Flip Flops"],
     "Shirts": ["Jeans", "Trousers", "Belts", "Formal Shoes"],
     "Tops": ["Jeans", "Handbags", "Heels"],
     "Kurtas": ["Leggings", "Sandals", "Earrings"],

@@ -1,14 +1,45 @@
 {% extends "base.html" %}
 {% block content %}
+<style>
+.pdp-carousel{position:relative}
+.pdp-recommendation-track{display:flex;flex-flow:row nowrap;gap:14px;overflow-x:auto;overscroll-behavior-inline:contain;scroll-behavior:smooth;scroll-snap-type:x mandatory;padding:2px 3px 14px;scrollbar-width:none}
+.pdp-recommendation-track::-webkit-scrollbar{display:none}
+.pdp-recommendation-track>.card{flex:0 0 clamp(175px,calc((100% - 56px)/5),230px);scroll-snap-align:start}
+.pdp-recommendation-track>.card img{height:180px;object-fit:contain}
+.pdp-carousel-arrow{position:absolute;z-index:2;top:50%;transform:translateY(-50%);width:40px;height:40px;border:1px solid var(--line);border-radius:50%;background:#fff;color:var(--forest);font-size:25px;line-height:1;box-shadow:0 3px 12px rgba(18,60,54,.18);cursor:pointer}
+.pdp-carousel-arrow:hover{background:var(--mint)}
+.pdp-carousel-arrow[hidden]{display:none}
+.pdp-carousel-arrow.previous{left:-15px}
+.pdp-carousel-arrow.next{right:-15px}
+.pdp-image-frame{position:relative;min-width:0;background:#fff;border-radius:14px;padding:12px}
+.pdp-image-frame>img{display:block;width:100%;height:auto;max-height:560px;aspect-ratio:1/1;object-fit:contain;border-radius:10px}
+.pdp-image-frame>.wishlist-button{top:22px;right:22px;left:auto}
+.pdp-primary-card{min-width:0}
+.pdp-recommendation-track>.recommendation-card{flex-basis:clamp(195px,calc((100% - 56px)/5),245px);padding:10px}
+.pdp-recommendation-track .recommendation-card>a:first-of-type img{height:168px;object-fit:contain}
+.pdp-recommendation-track .recommendation-card .brand{margin-top:8px}
+.pdp-recommendation-track .recommendation-card .name{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;min-height:38px}
+.pdp-recommendation-track .recommendation-card .wishlist-button{top:17px;right:17px;left:auto}
+.pdp-recommendation-track .recommendation-card .rating{min-height:18px;font-size:12px}
+.pdp-recommendation-track .recommendation-prices{margin-top:5px}
+.pdp-recommendation-track .recommendation-stock{margin-top:5px}
+.pdp-recommendation-track .recommendation-cart,.pdp-recommendation-track .card-quantity{margin-top:8px}
+@media(max-width:600px){.pdp-recommendation-track>.card{flex-basis:72vw}.pdp-carousel-arrow.previous{left:2px}.pdp-carousel-arrow.next{right:2px}}
+</style>
 <div class="crumb">Home / {{ p.h1_category }} / {{ p.h2_category }} / {{ p.h3_category }}</div>
-<div class="pdp-shell">
+<article class="pdp-shell pdp-primary-card" data-product-id="{{ p.product_id }}" data-stock="{{ p.current_stock }}">
+  <div class="pdp-image-frame">
   <img src="{{ p.image_url or ('https://loremflickr.com/500/500/' ~ (p.h3_category|replace(' ',',')|lower) ~ '?lock=' ~ p.product_id[5:]) }}"
        data-name="{{ p.brand_name }}" data-cat="{{ p.h1_category }}" onerror="imgFallback(this)"
-       style="width:380px;height:380px;object-fit:cover;border-radius:8px;background:#f7f7f7">
+       alt="{{ p.product_name }}" loading="eager">
+  <button class="wishlist-button{% if wishlisted %} is-wishlisted{% endif %}" type="button"
+          data-product-id="{{ p.product_id }}" aria-label="{{ 'Remove from wishlist' if wishlisted else 'Add to wishlist' }}"
+          aria-pressed="{{ 'true' if wishlisted else 'false' }}"
+          onclick="toggleWishlist('{{ p.product_id }}',this)">{{ '♥' if wishlisted else '♡' }}</button>
+  </div>
   <div class="pdp-copy">
     <div style="color:#565959;font-size:14px">{{ p.brand_name }}</div>
     <h1 style="font-size:24px;margin:4px 0">{{ p.product_name }}</h1>
-    <button class="wishlist-detail" type="button" onclick="toggleWishlist('{{ p.product_id }}',this)">♡ Add to wishlist</button>
     <div class="rating" style="font-size:15px">{{ '★' * (p.avg_rating|round(0,'floor')|int) if p.avg_rating else '' }} {{ p.avg_rating }}</div>
     <hr style="margin:12px 0;border:none;border-top:1px solid #e3e6e6">
     <div class="pdp-price"><span class="price" style="font-size:28px">₹{{ '{:,.0f}'.format(p.current_price) }}</span>
@@ -22,14 +53,230 @@
     {% if p.current_stock and p.current_stock > 0 %}
       <div class="stock-ok" style="font-size:15px">In stock — {{ p.current_stock }} available</div>
       <div class="pdp-actions">
-        <button class="btn" onclick="addToCart('{{ p.product_id }}')">Add to Cart</button>
+        {% if cart_quantity %}
+          <div class="card-quantity"><small>In your cart</small><div class="quantity-control"><button type="button" onclick="updateCartQuantity('{{ p.product_id }}',-1)" aria-label="Decrease quantity">−</button><output data-quantity>{{ cart_quantity }}</output><button type="button" onclick="updateCartQuantity('{{ p.product_id }}',1)" aria-label="Increase quantity">+</button></div></div>
+        {% else %}
+          <button class="btn add-cart-button" onclick="addToCart('{{ p.product_id }}')">Add to Cart</button>
+        {% endif %}
         <button class="btn btn-buy" onclick="addToCart('{{ p.product_id }}');setTimeout(()=>location='/cart',600)">Buy Now</button>
       </div>
     {% else %}
       <div class="stock-out" style="font-size:16px">Currently Out of Stock</div>
       <p style="color:#565959;font-size:13px;margin-top:6px">Tip: use ⟳ Refresh Inventory (top bar) to restock.</p>
     {% endif %}
-    <div class="pdp-meta">Recommendations and shopping assistance will appear here.</div>
+    <div class="pdp-meta">Recommendations update from complementary products and similar styles below.</div>
   </div>
-</div>
+</article>
+<section class="home-section">
+  <div class="section-head">
+    <div><div class="eyebrow" id="fbt-eyebrow">Based on orders and related product pairings</div><h2 class="section" id="fbt-heading">Frequently bought together</h2></div>
+  </div>
+  <div class="pdp-carousel">
+    <button class="pdp-carousel-arrow previous" type="button" aria-label="Show previous complementary products" hidden>‹</button>
+    <div id="fbt-recommendations" class="grid pdp-recommendation-track" aria-live="polite" tabindex="0" aria-label="Frequently bought together products"><p>Finding complementary products…</p></div>
+    <button class="pdp-carousel-arrow next" type="button" aria-label="Show more complementary products" hidden>›</button>
+  </div>
+</section>
+<section class="home-section">
+  <div class="section-head">
+    <div><div class="eyebrow">More to explore</div><h2 class="section">Similar products</h2></div>
+  </div>
+  <div class="pdp-carousel">
+    <button class="pdp-carousel-arrow previous" type="button" aria-label="Show previous similar products" hidden>‹</button>
+    <div id="similar-recommendations" class="grid pdp-recommendation-track" aria-live="polite" tabindex="0" aria-label="Similar products"><p>Finding similar products…</p></div>
+    <button class="pdp-carousel-arrow next" type="button" aria-label="Show more similar products" hidden>›</button>
+  </div>
+</section>
+<script>
+function setupRecommendationCarousel(container) {
+  if (container.dataset.carouselInitialized) return;
+  container.dataset.carouselInitialized = "true";
+  const carousel = container.closest(".pdp-carousel");
+  const previous = carousel.querySelector(".previous");
+  const next = carousel.querySelector(".next");
+  const updateButtons = () => {
+    const maxScroll = container.scrollWidth - container.clientWidth;
+    previous.hidden = maxScroll <= 1 || container.scrollLeft <= 1;
+    next.hidden = maxScroll <= 1 || container.scrollLeft >= maxScroll - 1;
+  };
+  previous.addEventListener("click", () => {
+    container.scrollBy({ left: -container.clientWidth * 0.85, behavior: "smooth" });
+  });
+  next.addEventListener("click", () => {
+    container.scrollBy({ left: container.clientWidth * 0.85, behavior: "smooth" });
+  });
+  container.addEventListener("scroll", updateButtons, { passive: true });
+  new ResizeObserver(updateButtons).observe(container);
+  updateButtons();
+}
+
+function renderRecommendationCard(item) {
+  const card = document.createElement("article");
+  card.className = "card product-card recommendation-card";
+  card.dataset.productId = item.product_id;
+  card.dataset.stock = item.current_stock;
+
+  const link = document.createElement("a");
+  link.href = `/product/${encodeURIComponent(item.product_id)}`;
+  const image = document.createElement("img");
+  image.src = item.image_url || `https://loremflickr.com/300/300/${encodeURIComponent(item.category || "fashion")}?lock=${encodeURIComponent(item.product_id)}`;
+  image.alt = item.name || "Recommended product";
+  image.loading = "lazy";
+  image.dataset.name = item.brand_name || "";
+  image.dataset.cat = item.category || "";
+  image.onerror = function () { imgFallback(this); };
+  const brand = document.createElement("div");
+  brand.className = "brand";
+  brand.textContent = item.brand_name || "";
+  const name = document.createElement("div");
+  name.className = "name";
+  name.textContent = item.name || "View product";
+  link.append(image, brand, name);
+
+  const wishlist = document.createElement("button");
+  wishlist.type = "button";
+  wishlist.className = `wishlist-button${item.wishlisted ? " is-wishlisted" : ""}`;
+  wishlist.dataset.productId = item.product_id;
+  wishlist.textContent = item.wishlisted ? "♥" : "♡";
+  wishlist.setAttribute("aria-label", item.wishlisted ? "Remove from wishlist" : "Add to wishlist");
+  wishlist.setAttribute("aria-pressed", String(Boolean(item.wishlisted)));
+  wishlist.addEventListener("click", () => toggleWishlist(item.product_id, wishlist));
+
+  const rating = document.createElement("div");
+  rating.className = "rating";
+  const average = Number(item.avg_rating);
+  rating.textContent = average > 0
+    ? `${"★".repeat(Math.max(0, Math.min(5, Math.floor(average))))} ${average.toFixed(1)} · ${Number(item.review_count || 0).toLocaleString("en-IN")} reviews`
+    : `No ratings yet · ${Number(item.review_count || 0).toLocaleString("en-IN")} reviews`;
+
+  const prices = document.createElement("div");
+  prices.className = "recommendation-prices";
+  const currentPrice = Number(item.current_price);
+  if (Number.isFinite(currentPrice)) {
+    const price = document.createElement("span");
+    price.className = "price";
+    price.textContent = `₹${currentPrice.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
+    prices.append(price);
+  }
+  const mrp = Number(item.mrp);
+  if (Number.isFinite(currentPrice) && Number.isFinite(mrp) && mrp > currentPrice) {
+    const originalPrice = document.createElement("span");
+    originalPrice.className = "mrp";
+    originalPrice.textContent = `₹${mrp.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`;
+    prices.append(originalPrice);
+  }
+
+  const stock = document.createElement("div");
+  stock.className = "stock-ok recommendation-stock";
+  stock.textContent = `In stock (${Number(item.current_stock).toLocaleString("en-IN")})`;
+  card.append(wishlist, link, rating, prices, stock);
+  applyRecommendationCartState(card, Number(item.cart_quantity || 0));
+  return card;
+}
+
+function applyRecommendationCartState(card, quantity) {
+  card.querySelector(".recommendation-cart")?.remove();
+  card.querySelector(".card-quantity")?.remove();
+  const productId = card.dataset.productId;
+  const stock = Number(card.dataset.stock || 0);
+  if (quantity > 0) {
+    const controls = document.createElement("div");
+    controls.className = "card-quantity";
+    const label = document.createElement("small");
+    label.textContent = "In your cart";
+    const row = document.createElement("div");
+    row.className = "quantity-control";
+    const decrease = document.createElement("button");
+    decrease.type = "button";
+    decrease.textContent = "−";
+    decrease.setAttribute("aria-label", "Decrease quantity");
+    decrease.addEventListener("click", () => updateCartQuantity(productId, -1));
+    const count = document.createElement("output");
+    count.dataset.quantity = "";
+    count.textContent = quantity;
+    const increase = document.createElement("button");
+    increase.type = "button";
+    increase.textContent = "+";
+    increase.disabled = quantity >= stock;
+    increase.setAttribute("aria-label", "Increase quantity");
+    increase.addEventListener("click", () => updateCartQuantity(productId, 1));
+    row.append(decrease, count, increase);
+    controls.append(label, row);
+    card.append(controls);
+    return;
+  }
+
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "btn add-cart-button recommendation-cart";
+  button.textContent = "Add to Cart";
+  button.addEventListener("click", () => addToCart(productId));
+  card.append(button);
+}
+
+function renderRecommendationRow(container, items, emptyMessage) {
+  container.replaceChildren();
+  if (items.length) items.forEach(item => container.append(renderRecommendationCard(item)));
+  else container.textContent = emptyMessage;
+  setupRecommendationCarousel(container);
+}
+
+async function loadProductRecommendations() {
+  const fbtContainer = document.getElementById("fbt-recommendations");
+  const similarContainer = document.getElementById("similar-recommendations");
+  const productId = {{ p.product_id|tojson }};
+  const baseUrl = `/api/recommendations/product?product_id=${encodeURIComponent(productId)}&limit=100`;
+  const loadRow = async (container, url, emptyMessage, errorMessage) => {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+      const items = await response.json();
+      if (!Array.isArray(items)) throw new Error("Unexpected recommendation response");
+      renderRecommendationRow(container, items, emptyMessage);
+      return items;
+    } catch (error) {
+      container.textContent = errorMessage;
+      console.error(error);
+      return null;
+    }
+  };
+  const fbtUrl = `${baseUrl}&intent=complementary`;
+  const similarUrl = `${baseUrl}&intent=similar`;
+  const [fbtItems, initialSimilarItems] = await Promise.all([
+    loadRow(fbtContainer, fbtUrl, "No complementary products are available right now.", "Related products could not be loaded."),
+    loadRow(similarContainer, similarUrl, "No similar products are available right now.", "Similar products could not be loaded.")
+  ]);
+  if (fbtItems) {
+    const sources = new Set(fbtItems.map(item => item.source));
+    const heading = document.getElementById("fbt-heading");
+    const eyebrow = document.getElementById("fbt-eyebrow");
+    if (sources.size === 1 && sources.has("session_pairing")) {
+      heading.textContent = "Often viewed together";
+      eyebrow.textContent = "Based on browsing activity";
+    } else if (sources.size === 1 && sources.has("curated_complement")) {
+      heading.textContent = "Pairs well with";
+      eyebrow.textContent = "Curated complementary picks";
+    } else if (sources.size === 1 && sources.has("category_fallback")) {
+      heading.textContent = "More from this department";
+      eyebrow.textContent = "Related products in the same department";
+    } else if (sources.size > 1) {
+      heading.textContent = "Related picks";
+      eyebrow.textContent = "A blend of purchase, browsing, and curated signals";
+    }
+  }
+  if (fbtItems && initialSimilarItems) {
+    const excludedIds = new Set(fbtItems.map(item => item.product_id));
+    const distinctSimilarItems = initialSimilarItems.filter(
+      item => !excludedIds.has(item.product_id)
+    );
+    renderRecommendationRow(
+      similarContainer,
+      distinctSimilarItems,
+      "No similar products are available right now."
+    );
+  }
+}
+
+loadProductRecommendations();
+</script>
 {% endblock %}

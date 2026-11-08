@@ -1,0 +1,49 @@
+services:
+  supertokens-postgres:
+    image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${SUPERTOKENS_DB_NAME:?Set SUPERTOKENS_DB_NAME}
+      POSTGRES_USER: ${SUPERTOKENS_DB_USER:?Set SUPERTOKENS_DB_USER}
+      POSTGRES_PASSWORD: ${SUPERTOKENS_DB_PASSWORD:?Set a strong SUPERTOKENS_DB_PASSWORD}
+    volumes:
+      - supertokens-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - auth-private
+
+  supertokens:
+    image: supertokens/supertokens-postgresql:11.0@sha256:8d19640926c693498cfd4740ff395880ec6f3563695c0391e98bda32bb610137
+    restart: unless-stopped
+    depends_on:
+      supertokens-postgres:
+        condition: service_healthy
+    environment:
+      POSTGRESQL_HOST: supertokens-postgres
+      POSTGRESQL_PORT: "5432"
+      POSTGRESQL_USER: ${SUPERTOKENS_DB_USER:?Set SUPERTOKENS_DB_USER}
+      POSTGRESQL_PASSWORD: ${SUPERTOKENS_DB_PASSWORD:?Set a strong SUPERTOKENS_DB_PASSWORD}
+      POSTGRESQL_DATABASE_NAME: ${SUPERTOKENS_DB_NAME:?Set SUPERTOKENS_DB_NAME}
+      API_KEYS: ${SUPERTOKENS_API_KEY:?Set a generated SUPERTOKENS_API_KEY}
+      PASSWORDLESS_CODE_LIFETIME: "300000"
+      PASSWORDLESS_MAX_CODE_INPUT_ATTEMPTS: "5"
+    ports:
+      - "127.0.0.1:3567:3567"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:3567/hello | grep -q Hello"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks:
+      - auth-private
+
+networks:
+  auth-private:
+
+volumes:
+  supertokens-postgres-data:
