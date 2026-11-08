@@ -220,9 +220,10 @@ whose 90-day window ends inside the data are kept (`label_observed`; the generat
 **Cohort:** customers with a realized purchase in the 90 days before the snapshot.
 **Business use:** each month, send a retention offer to the 10% of active customers most likely to churn.
 
-The generator also stores ready-made monthly features (`customer_monthly_features`), but the check below shows they
-count orders from the **whole snapshot month**, i.e. up to 30 days *after* `snapshot_date`, which overlaps the label
-window. That is leakage, so every feature here is rebuilt from data strictly before the snapshot date.
+The generator also stores ready-made monthly features (`customer_monthly_features`). An earlier version counted orders
+from the **whole snapshot month**, up to 30 days *after* `snapshot_date`, which overlapped the label window (leakage).
+That is fixed in `generators/finalize_dataset.py`, `validators/validate_dataset.py` now fails if it comes back, and the
+check below asserts it. Features are still rebuilt here from the raw tables, strictly before each snapshot.
 """)
 
 code("""
@@ -249,6 +250,7 @@ for snap, part in stored.groupby("snapshot_date"):
     strict = realized[realized["order_timestamp"] < snap].groupby("customer_id")["order_id"].nunique()
     leaky_rows += int((part.set_index("customer_id")["orders"] > strict.reindex(part["customer_id"]).fillna(0).to_numpy()).sum())
 print(f"Stored feature rows counting orders on or after snapshot_date: {leaky_rows:,} of {len(stored):,}")
+assert leaky_rows == 0, "stored features leak into the label window; see validators/validate_dataset.py"
 SUMMARY["churn_stored_feature_leaky_rows"] = leaky_rows
 """)
 
@@ -329,7 +331,7 @@ print(f"Chosen on validation: {best_name}")
 print(f"Recency rule: flag customers with no order for more than {best_t} days "
       f"(validation AUC {roc_auc_score(y['validation'], X['validation']['recency_days']):.3f})")
 
-# Same split and model on the stored (leaky) feature table, to show what the leak would have reported.
+# Cross-check: the same model on the generator's stored (now point-in-time) feature table.
 leaky_cols = ["tenure_days", "orders", "revenue", "quantity", "margin", "recency_days", "frequency_90d", "monetary_90d", "return_rate_90d"]
 lk = {k: v[["customer_id", "snapshot_date", "churn"]].merge(stored, on=["customer_id", "snapshot_date"]) for k, v in split.items()}
 leaky_model = HistGradientBoostingClassifier(random_state=0).fit(lk["train"][leaky_cols], lk["train"]["churn"])
@@ -360,8 +362,8 @@ for name, score in scores_test.items():
                  "Brier": brier_score_loss(y["test"], score) if name != "Recency rule" else np.nan})
 table = pd.DataFrame(rows).set_index("model")
 print(table.round(3).to_string())
-print(f"\\nGradient boosting on the stored (leaky) features would report test AUC {leaky_auc:.3f} "
-      f"vs {table.loc['Gradient boosting', 'ROC-AUC']:.3f} with leakage-free features.")
+print(f"\\nCross-check: gradient boosting on the generator's stored features reaches test AUC {leaky_auc:.3f} "
+      f"vs {table.loc['Gradient boosting', 'ROC-AUC']:.3f} on the notebook's rebuilt features (both leakage-free).")
 best = table.loc[best_name]
 SUMMARY["churn"] = {"model": best_name, "test_auc": float(best["ROC-AUC"]), "test_auc_ci": best["AUC 95% CI"],
                     "pr_auc": float(best["PR-AUC"]), "base_rate": float(base),
@@ -369,7 +371,7 @@ SUMMARY["churn"] = {"model": best_name, "test_auc": float(best["ROC-AUC"]), "tes
                     "top_decile_lift": float(best["top-10% lift"]), "brier": float(best["Brier"]),
                     "logreg_auc": float(table.loc["Logistic regression", "ROC-AUC"]),
                     "hgb_auc": float(table.loc["Gradient boosting", "ROC-AUC"]),
-                    "rule_auc": float(table.loc["Recency rule", "ROC-AUC"]), "leaky_auc": float(leaky_auc),
+                    "rule_auc": float(table.loc["Recency rule", "ROC-AUC"]), "stored_features_auc": float(leaky_auc),
                     "test_rows": int(len(y["test"]))}
 """)
 
@@ -416,8 +418,8 @@ md("""
 signals that drive it (time since the last order, price sensitivity) are only partly visible in the features, so the
 leakage-free model is weak; that weakness is the honest result. Real data would differ. `generators/gen_support.py` describes
 NPS-driven churn, but it is not part of the default generation pipeline; support contacts here carry random sentiment,
-which is why they add little. The stored `customer_monthly_features` table leaks the snapshot month and should be fixed
-in `generators/finalize_dataset.py` before anyone trains on it directly.
+which is why they add little. The stored `customer_monthly_features` table used to leak the snapshot month; that was
+fixed and is now guarded by the validator.
 """)
 
 md("""

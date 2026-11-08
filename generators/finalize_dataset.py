@@ -70,17 +70,20 @@ def build_customer_lifecycle():
     real=o[o.is_realized].copy()
     if real.empty: return pd.DataFrame(),pd.DataFrame()
     end=max(pd.to_datetime(real.order_timestamp).max().normalize(), pd.to_datetime(c.signup_date).max())
-    # Monthly snapshots only from signup month through observation horizon; features use history strictly <= snapshot date.
+    # Monthly snapshots at the start of each month. Features use only orders strictly BEFORE the
+    # snapshot date; the churn label covers [snapshot_date, snapshot_date + 90 days]. (An earlier
+    # version counted the whole snapshot month, i.e. up to 30 days after the snapshot, which leaked
+    # into the label window; validators/validate_dataset.py now checks this.)
     months=pd.date_range(pd.to_datetime(c.signup_date).min().to_period("M").start_time,end,freq="MS")
     rows=[]
     real=real.sort_values("order_timestamp")
     for m in months:
-        hist=real[real.order_timestamp < m+pd.offsets.MonthBegin(1)]
+        hist=real[real.order_timestamp < m]
         agg=hist.groupby("customer_id").agg(last_purchase=("order_timestamp","max"),orders=("order_id","nunique"),revenue=("realized_revenue","sum"),quantity=("total_quantity","sum"),margin=("gross_margin","sum"))
-        active=c[c.signup_date < m+pd.offsets.MonthBegin(1)][["customer_id","signup_date"]].copy().set_index("customer_id")
+        active=c[c.signup_date < m][["customer_id","signup_date"]].copy().set_index("customer_id")
         x=active.join(agg,how="left").reset_index(); x["snapshot_date"]=m
         x[["orders","revenue","quantity","margin"]]=x[["orders","revenue","quantity","margin"]].fillna(0)
-        x["recency_days"]=(m+pd.offsets.MonthEnd(0)-x.last_purchase.fillna(x.signup_date)).dt.days.clip(lower=0)
+        x["recency_days"]=(m-x.last_purchase.fillna(x.signup_date)).dt.days.clip(lower=0)
         x["tenure_days"]=(m-x.signup_date).dt.days.clip(lower=0)
         x["frequency_90d"]=x.customer_id.map(hist[hist.order_timestamp>=m-pd.Timedelta(days=90)].groupby("customer_id").order_id.nunique()).fillna(0).astype(int)
         x["monetary_90d"]=x.customer_id.map(hist[hist.order_timestamp>=m-pd.Timedelta(days=90)].groupby("customer_id").realized_revenue.sum()).fillna(0.0)
@@ -101,7 +104,7 @@ def build_customer_lifecycle():
     bycust={k:g.order_timestamp.to_numpy() for k,g in future.groupby("customer_id")}
     labels=[]; observed=[]
     for row in lab.itertuples(index=False):
-        arr=bycust.get(row.customer_id,np.array([],dtype="datetime64[ns]")); start=np.datetime64(row.snapshot_date+pd.Timedelta(days=1)); stop=np.datetime64(row.label_window_end)
+        arr=bycust.get(row.customer_id,np.array([],dtype="datetime64[ns]")); start=np.datetime64(row.snapshot_date); stop=np.datetime64(row.label_window_end)
         if len(arr):
             labels.append(bool(((arr>=start)&(arr<=stop)).any()))
         else: labels.append(False)

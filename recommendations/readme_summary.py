@@ -164,10 +164,16 @@ def build_insights(summary: dict) -> str:
                      f"(95% CI {churn['test_auc_ci']}) vs {churn['rule_auc']:.3f} for a days-since-last-order rule; "
                      f"targeting the top 10% catches {churn['top_decile_capture']:.0%} of churners at "
                      f"{churn['top_decile_lift']:.1f}× the base rate ({churn['base_rate']:.0%}). Weak, but leakage-free.")
-        lines.append(f"- **Leakage found:** the generator's `customer_monthly_features` count orders from the whole "
-                     f"snapshot month, after `snapshot_date` ({summary['churn_stored_feature_leaky_rows']:,} rows); "
-                     f"trained on them the same model would report AUC {churn['leaky_auc']:.3f}. The notebook rebuilds "
-                     "every feature strictly before the snapshot.")
+        before_path = ROOT / "analysis" / "reports" / "churn_leak_before_fix.json"
+        if before_path.exists():
+            before = json.loads(before_path.read_text())
+            lines.append(f"- **Leak found and fixed:** the generator's monthly churn features used to count the whole "
+                         f"snapshot month, i.e. orders after `snapshot_date` ({before['stored_feature_leaky_rows']:,} of "
+                         f"{before['stored_feature_rows']:,} rows). Trained on them, {before['model'].lower()} reported "
+                         f"test AUC {before['leaky_feature_test_auc']:.3f} vs {before['leakage_free_test_auc']:.3f} without "
+                         f"the leak. Features are now built strictly before the snapshot "
+                         f"({summary['churn_stored_feature_leaky_rows']:,} leaky rows now), and "
+                         "`validators/validate_dataset.py` fails if that ever regresses.")
     return "\n".join(lines)
 
 

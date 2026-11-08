@@ -58,5 +58,14 @@ if not p.empty and not t.empty:
     pp=p.set_index('product_id'); chk('no sales before product launch',t.apply(lambda x: pd.Timestamp(x.order_timestamp)>=pd.Timestamp(pp.loc[x.product_id,'launch_date']),axis=1).all())
 if (DATA/'customer_churn_labels.parquet').exists() and (DATA/'customer_monthly_features.parquet').exists():
     snap=read('customer_monthly_features'); lab=read('customer_churn_labels'); chk('churn labels are future-window based', (pd.to_datetime(lab.label_window_end)>pd.to_datetime(lab.snapshot_date)).all()); chk('churn label snapshot join valid',lab.merge(snap,on=['customer_id','snapshot_date']).shape[0]==len(lab))
+    # Point-in-time check: each snapshot's order count must equal the realized orders strictly before
+    # snapshot_date. Counting anything on/after it would leak into the label window.
+    if not o.empty:
+        real=o[o.is_realized].copy(); real['order_timestamp']=pd.to_datetime(real.order_timestamp); snap['snapshot_date']=pd.to_datetime(snap.snapshot_date)
+        leaky=0
+        for sd,part in snap.groupby('snapshot_date'):
+            strict=real[real.order_timestamp<sd].groupby('customer_id').order_id.nunique()
+            leaky+=int((part.orders.to_numpy()!=strict.reindex(part.customer_id).fillna(0).to_numpy()).sum())
+        chk('churn features use only orders before snapshot_date',leaky==0,f'{leaky} customer-snapshots count orders on/after the snapshot')
 if (DATA/'metrics.json').exists(): chk('metric definitions present',True)
 print('\nRESULT:', 'ALL GREEN' if not fails else f'{len(fails)} FAILED: {fails}'); sys.exit(1 if fails else 0)
