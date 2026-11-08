@@ -3,7 +3,6 @@ SQLite is the source of truth for the web app. DuckDB is an analytical mirror.
 """
 from pathlib import Path
 import os
-import duckdb
 import pandas as pd
 
 BASE = Path(__file__).resolve().parent
@@ -33,6 +32,9 @@ def _safe(name: str) -> str:
 
 
 def ensure_duckdb():
+    # Imported lazily: the web app only needs DuckDB when live mirroring is on.
+    import duckdb
+
     con = duckdb.connect(str(DUCKDB))
     return con
 

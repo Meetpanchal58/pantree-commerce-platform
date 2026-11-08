@@ -102,7 +102,8 @@ do not expose the OpenSMS API or its key publicly. For production, also set
 passwords or keys in GitHub. On a 512 MB instance such as Render's free tier, set
 `PANTREE_HEAVY_RECOMMENDATIONS=0` so the app skips the collaborative-filtering and
 sentence-transformer models, which otherwise exceed the memory limit; recommendations fall back to
-lighter sources.
+lighter sources. `render.yaml` installs `requirements-render.txt`, which leaves out those
+models' packages (including PyTorch) for faster builds.
 See the detailed
 [email and phone sign-in setup](#passwordless-authentication) if you need provider-specific help.
 
