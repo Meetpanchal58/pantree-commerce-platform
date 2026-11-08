@@ -28,6 +28,7 @@ from supertokens_python.recipe.passwordless import InputOverrideConfig
 
 LOCAL_RATE_LIMIT_KEY = Path(__file__).resolve().parent / ".local" / "rate-limit.key"
 TENANT_ID = "public"
+IMPLICIT_TLS_SMTP_PORTS = {465, 2465}
 
 
 class _UnconfiguredEmailService(EmailDeliveryInterface[Any]):
@@ -174,9 +175,10 @@ def initialize_supertokens() -> None:
 
     if smtp_host and all(email_credentials):
         smtp_port = int(os.getenv("SMTP_PORT", "465"))
-        if smtp_port != 465:
+        # 2465 is Resend's implicit-TLS alternative for hosts that block 465.
+        if smtp_port not in IMPLICIT_TLS_SMTP_PORTS:
             raise RuntimeError(
-                "SMTP_PORT must be 465 so OTP mail uses implicit TLS."
+                "SMTP_PORT must be 465 or 2465 so OTP mail uses implicit TLS."
             )
         email_service = passwordless.SMTPService(
             smtp_settings=SMTPSettings(
@@ -188,7 +190,7 @@ def initialize_supertokens() -> None:
                 ),
                 username=email_credentials[1],
                 password=email_credentials[2],
-                secure=smtp_port == 465,
+                secure=True,
             )
         )
     else:

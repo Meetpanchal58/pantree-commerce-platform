@@ -339,7 +339,7 @@ for creating, resending, or consuming codes are disabled in favor of Pantree's t
    `SMTP_FROM_EMAIL` and `SMTP_USERNAME`. Put the Google App Password in
    `SMTP_PASSWORD` (not your regular Gmail password). Alternatively, use Resend SMTP
    (host `smtp.resend.com`, port `465`, username `resend`, and the Resend API key as
-   `SMTP_PASSWORD`). SMTP port `465` is enforced so OTP mail uses implicit TLS. With Resend, verify
+   `SMTP_PASSWORD`). SMTP port `465` (or Resend's `2465`, for hosts such as Render's free tier that block 465) is enforced so OTP mail uses implicit TLS. With Resend, verify
    the sending domain and its DNS
    records in Resend, and use an authorized `SMTP_FROM_EMAIL`. Gmail requires 2-Step
    Verification; do not use your normal account password.
@@ -390,7 +390,7 @@ server and inbound ports 80/443 must be available.
    | `PANTREE_DB_DIR`, `PANTREE_DATA_DIR` | Durable SQLite directory and read-only warehouse directory on the host. |
    | `SUPERTOKENS_DB_USER`, `SUPERTOKENS_DB_PASSWORD`, `SUPERTOKENS_DB_NAME`, `SUPERTOKENS_API_KEY` | Private SuperTokens PostgreSQL and Core credentials. |
    | `PANTREE_RATE_LIMIT_SECRET` | At least 32 random characters; HMAC key for request-limit buckets. |
-   | `SMTP_HOST`, `SMTP_FROM_EMAIL`, `SMTP_USERNAME`, `SMTP_PASSWORD` | Real email provider settings. `SMTP_PORT` must be `465`; `SMTP_FROM_NAME` defaults to `Pantree`. |
+   | `SMTP_HOST`, `SMTP_FROM_EMAIL`, `SMTP_USERNAME`, `SMTP_PASSWORD` | Real email provider settings. `SMTP_PORT` must be `465`, or `2465` with Resend; `SMTP_FROM_NAME` defaults to `Pantree`. |
    | `OPENSMS_API_URL`, `OPENSMS_API_KEY` | Private OpenSMS phone endpoint and Bearer API key for SMS delivery. |
 
    The production Compose file sets `APP_ENV=production`, `PUBLIC_APP_URL` from
