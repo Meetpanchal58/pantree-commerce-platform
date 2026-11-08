@@ -8,9 +8,11 @@ from .common import DATA, read_realized_transactions
 
 
 logger = logging.getLogger(__name__)
-EVENT_WEIGHTS = {"pdp_view": 1.0, "add_to_cart": 3.0, "purchase": 5.0}
-# Serving hyperparameters (see recommendations/tune_als.py for how they were chosen).
-ALS_PARAMS = {"factors": 48, "regularization": 0.1, "iterations": 15}
+# Tuned with recommendations/tune_als.py (validation period, then one test check):
+# views count less and purchases more than the original 1/3/5, and 32 factors
+# beat 48. Held-out Recall@20 0.0669 -> 0.0699, NDCG@20 0.0435 -> 0.0453.
+EVENT_WEIGHTS = {"pdp_view": 0.5, "add_to_cart": 3.0, "purchase": 8.0}
+ALS_PARAMS = {"factors": 32, "regularization": 0.01, "iterations": 15}
 _WARM_LOCK = Lock()
 _MODEL_READY = False
 
