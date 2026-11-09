@@ -12,9 +12,9 @@ leads with results; setup is under [How to run](#how-to-run).
 - **Problem:** rank products for the home-page "Recommended for you" row, predicting the exact product bought among 10,000, using only data known one hour before the order.
 - **Method:** 5 retrieval sources (implicit ALS, trending, recent activity, FAISS content similarity, co-purchase) → 11-feature LightGBM LambdaRank → segment-aware policy (popularity for first-time buyers). The evaluated policy is the code the storefront serves (`recommendations/policy.py`).
 - **Evaluation:** 3-period temporal split, 7-day embargo, 5,647 held-out orders (of 5,831; see order counts below), paired-bootstrap 95% CIs.
-- **Headline:** served policy NDCG@10 0.0371 vs 0.0239 for retrieval order: +0.0132 absolute (95% CI +0.0108 to +0.0156), +55% relative (95% CI +44% to +69%); 7.1× random. Within lists that contain a bought product (900 orders), NDCG@10 is 0.263.
-- **Ceiling:** the served policy captures 82% of the achievable gain from random to an oracle that knows each customer's true taste (95% CI 72% to 92%).
-- **Bottleneck:** candidate lists contain a bought product for 15.4% of orders; the top 100 by true taste would contain one for 39.6%. Next step: better retrieval (taste-aware candidate generation, e.g. a two-tower model), not more ranking features.
+- **Headline:** served policy NDCG@10 0.0386 vs 0.0239 for retrieval order: +0.0147 absolute (95% CI +0.0122 to +0.0172), +61% relative (95% CI +49% to +76%); 6.2× random. Within lists that contain a bought product (1,191 orders), NDCG@10 is 0.205.
+- **Ceiling:** the served policy captures 83% of the achievable gain from random to an oracle that knows each customer's true taste (95% CI 73% to 94%).
+- **Bottleneck:** candidate lists contain a bought product for 20.4% of orders; the top 100 by true taste would contain one for 39.6%. Next step: better retrieval (taste-aware candidate generation, e.g. a two-tower model), not more ranking features.
 - **Caveat:** synthetic data with known ground truth; online impression/click logging and an A/B split are built, but there is no real traffic yet.
 <!-- RESULTS:END -->
 
@@ -143,35 +143,52 @@ End-to-end NDCG@10 (every held-out order with a new product; a bought product mi
 
 | Ordering | All (5,647) | First-time buyers (1,521) | Repeat buyers (4,126) | Ranking-only, all | Share of achievable gain |
 |---|---|---|---|---|---|
-| Random order | 0.0052 | 0.0042 | 0.0056 | 0.039 | – |
-| Popularity | 0.0166 | 0.0228 | 0.0142 | 0.116 | 29% (23% to 36%) |
-| Retrieval score (previous production) | 0.0239 | 0.0104 | 0.0289 | 0.169 | 48% (40% to 57%) |
-| New ranker (11 features) | 0.0390 | 0.0259 | 0.0438 | 0.278 | 87% (77% to 97%) |
-| Production blend (50/50) | 0.0369 | 0.0221 | 0.0424 | 0.263 | 82% (72% to 92%) |
-| **Segment-aware (served)** | 0.0371 | 0.0228 | 0.0424 | 0.263 | 82% (72% to 92%) |
-| Oracle (true taste, not deployable) | 0.0440 | 0.0380 | 0.0462 | 0.325 | – |
+| Random order | 0.0062 | 0.0038 | 0.0071 | 0.033 | – |
+| Popularity | 0.0164 | 0.0226 | 0.0142 | 0.086 | 26% (19% to 33%) |
+| Retrieval score (previous production) | 0.0239 | 0.0104 | 0.0289 | 0.127 | 45% (37% to 54%) |
+| New ranker (11 features) | 0.0384 | 0.0248 | 0.0434 | 0.203 | 82% (72% to 93%) |
+| Ranker blend (all customers) | 0.0386 | 0.0253 | 0.0435 | 0.205 | 83% (73% to 94%) |
+| **Segment-aware (served)** | 0.0386 | 0.0253 | 0.0435 | 0.205 | 83% (73% to 94%) |
+| Oracle (true taste, not deployable) | 0.0452 | 0.0380 | 0.0478 | 0.249 | – |
 
 Paired bootstrap over orders (end-to-end NDCG@10):
 
-- new ranker vs retrieval: +0.0151 (95% CI +0.0125 to +0.0178, significant)
-- new ranker vs popularity: +0.0224 (95% CI +0.0193 to +0.0257, significant)
-- new ranker vs random: +0.0337 (95% CI +0.0298 to +0.0376, significant)
-- segment aware vs retrieval: +0.0132 (95% CI +0.0108 to +0.0156, significant)
-- segment aware vs popularity: +0.0206 (95% CI +0.0177 to +0.0236, significant)
-- segment aware vs production blend: +0.0002 (95% CI -0.0011 to +0.0016, not significant)
+- new ranker vs retrieval: +0.0145 (95% CI +0.0118 to +0.0171, significant)
+- new ranker vs popularity: +0.0219 (95% CI +0.0187 to +0.0251, significant)
+- new ranker vs random: +0.0321 (95% CI +0.0281 to +0.0359, significant)
+- segment aware vs retrieval: +0.0147 (95% CI +0.0122 to +0.0172, significant)
+- segment aware vs popularity: +0.0221 (95% CI +0.0190 to +0.0253, significant)
+- segment aware vs production blend: +0.0000 (95% CI +0.0000 to +0.0000, not significant)
 
-Retrieval (is a bought product in the candidate list at all?). Per-source figures use each source's full list; the combined candidate list keeps only 20 per source, which is why one source alone can exceed the combined figure (and why keeping more ALS candidates is a cheap retrieval improvement to try):
+Retrieval (is a bought product in the candidate list at all?). Per-source figures use each source's full list; the combined candidate list takes a quota from each source (collaborative 80, content 17, fbt 17, trending 17, recent_activity 17) and then fills by score, so one source alone can exceed the combined figure:
 
 - collaborative: 14.4% of test orders
 - trending: 6.3% of test orders
 - recent_activity: 6.2% of test orders
 - content: 4.5% of test orders
 - fbt: 2.6% of test orders
-- all sources combined (candidate list of up to 100): 15.4%; **retrieval ceiling** (top 100 of all eligible products by true taste): 39.6%
+- all sources combined (candidate list of up to 150): 20.4%; **retrieval ceiling** (top 100 of all eligible products by true taste): 39.6%
 
-Order counts: 5,831 paid orders in the test period. 25 came from customers with no earlier activity (cold start); they stay in and are scored with documented default features. 184 only re-bought earlier products (excluded from candidates), leaving 5,647 for the end-to-end tables. 900 had a bought product in the list; ranking-only tables also need at least 10 candidates and one not-bought candidate (0 + 0 dropped), leaving 900.
+Order counts: 5,831 paid orders in the test period. 25 came from customers with no earlier activity (cold start); they stay in and are scored with documented default features. 184 only re-bought earlier products (excluded from candidates), leaving 5,647 for the end-to-end tables. 1,191 had a bought product in the list; ranking-only tables also need at least 10 candidates and one not-bought candidate (0 + 0 dropped), leaving 1,191.
 
-Ranker features with the most gain: `n_sources` (22%), `retrieval_score` (15%), `log_price_ratio` (13%), `source_id` (13%), `log_product_popularity` (12%).
+Policy settings (chosen on the validation period by `python -m recommendations.tune_policy`): pool of 150, quotas collaborative 80, content 17, fbt 17, trending 17, recent_activity 17, ranker weight 0.75 in the blend with the retrieval score, first-time buyers get the same ranker blend, trending window 30 days.
+
+**Leave-one-source-out ablation (test period).**
+
+Each row rebuilds the candidate lists without one source, retrains the ranker without it on period B and scores the served policy on the same test orders. The interval is the paired-bootstrap 95% CI of the change in NDCG@10 versus the full system.
+
+| Without | Pool recall | Served NDCG@10 | Change vs full (95% CI) |
+|---|---|---|---|
+| (nothing: full system) | 0.1667 | 0.0386 | – |
+| collaborative | 0.1153 | 0.0294 | -0.0092 (-0.0119 to -0.0066) |
+| content | 0.1609 | 0.0384 | -0.0001 (-0.0015 to +0.0012) |
+| fbt | 0.1655 | 0.0376 | -0.0010 (-0.0023 to +0.0003) |
+| trending | 0.1609 | 0.0340 | -0.0045 (-0.0062 to -0.0030) |
+| recent_activity | 0.1596 | 0.0400 | +0.0014 (+0.0002 to +0.0026) |
+
+**Recall acceptance check (passed):** combined candidate list recall 0.1667 vs 0.1178 for the best single source (collaborative, its own top list of the same size).
+
+Ranker features with the most gain: `n_sources` (23%), `retrieval_score` (21%), `log_product_popularity` (12%), `log_price_ratio` (12%), `source_id` (10%).
 
 ALS tuning (`python -m recommendations.tune_als`, chosen on the validation period with a 7-day embargo, checked once on the test period): 32 factors, regularisation 0.1, weights (view, cart, purchase) (1, 3, 5); held-out Recall@20 0.0900 with the previous serving settings → 0.0900. Serving and evaluation read these settings from `als_tuning.json`. Full grid: [`als_tuning.md`](recommendations/reports/als_tuning.md).
 <!-- EVAL:END -->
