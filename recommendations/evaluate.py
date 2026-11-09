@@ -139,6 +139,8 @@ class History:
     """Point-in-time look-ups: what a customer viewed/bought before a moment."""
 
     def __init__(self, activity: pd.DataFrame, transactions: pd.DataFrame):
+        # Look-ups bisect on time, so each customer's rows must be in time order.
+        activity = activity.sort_values("event_timestamp", kind="mergesort")
         self.views = {
             cid: (g["event_timestamp"].to_numpy(), g["product_id"].to_numpy())
             for cid, g in activity.groupby("customer_id", sort=False)

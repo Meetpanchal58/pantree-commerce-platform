@@ -35,6 +35,22 @@ so it is a legitimate feature rather than a leak. It is a catalog snapshot, not 
 point-in-time history, so early queries see a rating that includes later
 reviews; ratings move slowly, and the effect is the same for every model compared.
 
+Prices (`current_price`, `mrp`) used by the price-ratio and discount features are the
+same kind of catalog snapshot: price history is not recorded, so every query sees
+today's price.
+
+## Nothing from the query hour reaches the evaluation
+
+Each test order is queried one hour before it was placed. Customer history
+(`History.viewed_before` / `bought_list`), product popularity
+(`ActivityIndex.counts_before`), trending, recent activity and the co-purchase and
+ALS training data all use events strictly before their time argument, and the
+availability filter uses the last full day's inventory close before the query.
+`tests/test_leakage.py` adds views, cart adds and purchases of the target product
+inside that hour (and the target order itself) and checks that the candidate list
+and every feature value stay identical, and that a restock or sell-out recorded
+after the query does not change availability.
+
 ## The simulator's ground truth is off limits
 
 The simulator decides purchases from hidden inputs: each customer's true taste
