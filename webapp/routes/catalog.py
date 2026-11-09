@@ -216,12 +216,6 @@ def pdp(
     if not s:
         con.close()
         return RedirectResponse("/login", status_code=303)
-    log_event(
-        con, s["customer_id"], sid, s["device_type"], "pdp_view", "pdp", product_id=pid
-    )
-    if rec and pos is not None:
-        # Opened from a recommendation card: count the click (rec_logging.py).
-        log_click(con, rec, pos, s["customer_id"], pid, now(), uid)
     ensure_wishlist(con)
     p = con.execute(
         """SELECT p.*, i.current_stock FROM products p JOIN inventory i USING(product_id)
@@ -229,9 +223,15 @@ def pdp(
         (pid,),
     ).fetchone()
     if not p:
-        con.commit()
+        # Unknown product: log nothing (no view, no recommendation click).
         con.close()
         return RedirectResponse("/", status_code=303)
+    log_event(
+        con, s["customer_id"], sid, s["device_type"], "pdp_view", "pdp", product_id=pid
+    )
+    if rec and pos is not None:
+        # Opened from a recommendation card: count the click (rec_logging.py).
+        log_click(con, rec, pos, s["customer_id"], pid, now(), uid)
     wishlisted = (
         con.execute(
             "SELECT 1 FROM wishlist WHERE customer_id=? AND product_id=?",

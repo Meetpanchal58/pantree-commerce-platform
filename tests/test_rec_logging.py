@@ -152,3 +152,27 @@ class ServingControlGroupTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClickValidationTests(unittest.TestCase):
+    def test_unknown_product_logs_no_click_and_no_view(self):
+        from unittest.mock import MagicMock
+
+        from webapp.routes import catalog
+
+        con = sqlite3.connect(":memory:")
+        con.row_factory = sqlite3.Row
+        con.execute("CREATE TABLE products (product_id TEXT)")
+        con.execute("CREATE TABLE inventory (product_id TEXT, current_stock INTEGER)")
+        session = {"customer_id": "cust-1", "device_type": "web"}
+        with (
+            patch.object(catalog, "db", return_value=con),
+            patch.object(catalog, "get_session", return_value=session),
+            patch.object(catalog, "ensure_wishlist"),
+            patch.object(catalog, "log_event") as log_event,
+            patch.object(catalog, "log_click") as log_click,
+        ):
+            response = catalog.pdp("no-such-product", MagicMock(), sid="s", rec="req-1", pos=1)
+        self.assertEqual(response.status_code, 303)
+        log_click.assert_not_called()
+        log_event.assert_not_called()
