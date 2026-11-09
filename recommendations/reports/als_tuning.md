@@ -1,6 +1,6 @@
 # ALS tuning report
 
-Generated 2026-11-09T14:21:36+00:00 by `python -m recommendations.tune_als`.
+Generated 2026-11-09T14:38:59+00:00 by `python -m recommendations.tune_als`.
 
 Metric: how well each customer's top 20 ALS products predict what they buy in the next period.
 
@@ -8,13 +8,13 @@ Metric: how well each customer's top 20 ALS products predict what they buy in th
 
 | Stage | Weights (view, cart, buy) | Factors | Reg | Recall@20 | NDCG@20 |
 |---|---|---|---|---|---|
-| weights | (1, 3, 5) | 32 | 1.0 | 0.0772 | 0.0471 |
-| weights | (1, 1, 1) | 32 | 1.0 | 0.0704 | 0.0434 |
-| weights | (1, 5, 10) | 32 | 1.0 | 0.0767 | 0.0466 |
-| weights | (0.5, 3, 8) | 32 | 1.0 | 0.0759 | 0.0467 |
-| weights | (0.2, 1, 10) | 32 | 1.0 | 0.0762 | 0.0458 |
-| weights | (0.1, 0.5, 20) | 32 | 1.0 | 0.0755 | 0.0454 |
-| weights | (0.0, 0.0, 1.0) | 32 | 1.0 | 0.0619 | 0.0384 |
+| weights | (1, 3, 5) | 32 | 0.1 | 0.0768 | 0.0473 |
+| weights | (1, 1, 1) | 32 | 0.1 | 0.0706 | 0.0435 |
+| weights | (1, 5, 10) | 32 | 0.1 | 0.0768 | 0.0466 |
+| weights | (0.5, 3, 8) | 32 | 0.1 | 0.0762 | 0.0468 |
+| weights | (0.2, 1, 10) | 32 | 0.1 | 0.0763 | 0.0459 |
+| weights | (0.1, 0.5, 20) | 32 | 0.1 | 0.0753 | 0.0453 |
+| weights | (0.0, 0.0, 1.0) | 32 | 0.1 | 0.0572 | 0.0370 |
 | hyperparameters | (1, 3, 5) | 16 | 0.01 | 0.0758 | 0.0461 |
 | hyperparameters | (1, 3, 5) | 16 | 0.1 | 0.0756 | 0.0460 |
 | hyperparameters | (1, 3, 5) | 16 | 1.0 | 0.0759 | 0.0462 |
@@ -35,5 +35,5 @@ Metric: how well each customer's top 20 ALS products predict what they buy in th
 
 | Setting | Customers | Recall@20 | NDCG@20 |
 |---|---|---|---|
-| Serving before this run: 32 factors, reg 1.0, weights (1.0, 3.0, 5.0) | 4,170 | 0.0900 | 0.0558 |
+| Serving before this run: 32 factors, reg 0.1, weights (1.0, 3.0, 5.0) | 4,170 | 0.0900 | 0.0560 |
 | Tuned 32 factors, reg 0.1, weights (1, 3, 5) | 4,170 | 0.0900 | 0.0560 |
