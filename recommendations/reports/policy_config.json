@@ -1,0 +1,29 @@
+{
+  "chosen": {
+    "quotas": {
+      "collaborative": 80,
+      "content": 17,
+      "fbt": 17,
+      "trending": 17,
+      "recent_activity": 17
+    },
+    "pool_size": 150,
+    "ranker_blend": 0.75,
+    "first_timer_popularity": false,
+    "trending_window_days": 30
+  },
+  "chosen_on": "validation",
+  "periods": {
+    "retrieval_cutoff": "2025-12-17 10:05:18",
+    "fit": [
+      "2025-12-24 10:05:18",
+      "2026-02-04 12:46:58"
+    ],
+    "validation": [
+      "2026-02-11 12:46:58",
+      "2026-03-27 21:03:57.200000"
+    ],
+    "test_starts": "2026-04-03 21:03:57.200000"
+  },
+  "generated_by": "python -m recommendations.tune_policy"
+}

@@ -1,0 +1,491 @@
+{
+  "generated_at": "2026-11-09T15:43:01+00:00",
+  "periods": {
+    "retrieval_cutoff": "2025-12-17 10:05:18",
+    "fit": [
+      "2025-12-24 10:05:18",
+      "2026-02-04 12:46:58"
+    ],
+    "validation": [
+      "2026-02-11 12:46:58",
+      "2026-03-27 21:03:57.200000"
+    ],
+    "test_starts": "2026-04-03 21:03:57.200000"
+  },
+  "fit_orders": 2538,
+  "validation_orders": 2471,
+  "validation_orders_with_new_products": 2407,
+  "metric": "end-to-end NDCG@10 of the served policy on validation orders",
+  "search": "staged: trending window -> quotas x pool size -> ranker blend x first-timer rule",
+  "default": {
+    "quotas": {
+      "collaborative": 20,
+      "content": 20,
+      "fbt": 20,
+      "trending": 20,
+      "recent_activity": 20
+    },
+    "pool_size": 100,
+    "ranker_blend": 0.5,
+    "first_timer_popularity": true,
+    "trending_window_days": 30
+  },
+  "chosen": {
+    "quotas": {
+      "collaborative": 80,
+      "content": 17,
+      "fbt": 17,
+      "trending": 17,
+      "recent_activity": 17
+    },
+    "pool_size": 150,
+    "ranker_blend": 0.75,
+    "first_timer_popularity": false,
+    "trending_window_days": 30
+  },
+  "chosen_val_ndcg10": 0.03862851238270223,
+  "default_val_ndcg10": 0.036170096134052115,
+  "chosen_vs_default_val": {
+    "mean_diff": 0.0024584162486501176,
+    "ci_low": -0.0002024411784388368,
+    "ci_high": 0.004865026972541287
+  },
+  "rows": [
+    {
+      "stage": "trending_window",
+      "config": {
+        "quotas": {
+          "collaborative": 20,
+          "content": 20,
+          "fbt": 20,
+          "trending": 20,
+          "recent_activity": 20
+        },
+        "pool_size": 100,
+        "ranker_blend": 0.5,
+        "first_timer_popularity": true,
+        "trending_window_days": 7
+      },
+      "val_ndcg10": 0.03360373888717192,
+      "val_pool_recall": 0.1162927572358399,
+      "val_pool_contains_purchase": 0.141643059490085
+    },
+    {
+      "stage": "trending_window",
+      "config": {
+        "quotas": {
+          "collaborative": 20,
+          "content": 20,
+          "fbt": 20,
+          "trending": 20,
+          "recent_activity": 20
+        },
+        "pool_size": 100,
+        "ranker_blend": 0.5,
+        "first_timer_popularity": true,
+        "trending_window_days": 14
+      },
+      "val_ndcg10": 0.036141422025098006,
+      "val_pool_recall": 0.11646586345381525,
+      "val_pool_contains_purchase": 0.141643059490085
+    },
+    {
+      "stage": "trending_window",
+      "config": {
+        "quotas": {
+          "collaborative": 20,
+          "content": 20,
+          "fbt": 20,
+          "trending": 20,
+          "recent_activity": 20
+        },
+        "pool_size": 100,
+        "ranker_blend": 0.5,
+        "first_timer_popularity": true,
+        "trending_window_days": 30
+      },
+      "val_ndcg10": 0.036170096134052115,
+      "val_pool_recall": 0.12283617227530812,
+      "val_pool_contains_purchase": 0.14730878186968838
+    },
+    {
+      "stage": "trending_window",
+      "config": {
+        "quotas": {
+          "collaborative": 20,
+          "content": 20,
+          "fbt": 20,
+          "trending": 20,
+          "recent_activity": 20
+        },
+        "pool_size": 100,
+        "ranker_blend": 0.5,
+        "first_timer_popularity": true,
+        "trending_window_days": 60
+      },
+      "val_ndcg10": 0.03573107652346883,
+      "val_pool_recall": 0.1260559479296496,
+      "val_pool_contains_purchase": 0.1517604208822339
+    },
+    {
+      "stage": "quotas_pool",
+      "config": {
+        "quotas": {
+          "collaborative": 20,
+          "content": 7,
+          "fbt": 7,
+          "trending": 7,
+          "recent_activity": 7
+        },
+        "pool_size": 50,
+        "ranker_blend": 0.5,
+        "first_timer_popularity": true,
+        "trending_window_days": 30
+      },
+      "val_ndcg10": 0.033759036431264974,
+      "val_pool_recall": 0.09690486082260075,
+      "val_pool_contains_purchase": 0.11452853095912587
+    },
+    {
+      "stage": "quotas_pool",
+      "config": {
+        "quotas": {
+          "collaborative": 40,
+          "content": 2,
+          "fbt": 2,
+          "trending": 2,
+          "recent_activity": 2
+        },
+        "pool_size": 50,
+        "ranker_blend": 0.5,
+        "first_timer_popularity": true,
+        "trending_window_days": 30
+      },
+      "val_ndcg10": 0.03514472598110158,
+      "val_pool_recall": 0.10434842819554078,
+      "val_pool_contains_purchase": 0.12140833670578713
+    },
+    {
+      "stage": "quotas_pool",
+      "config": {
+        "quotas": {
+          "collaborative": 20,
+          "content": 20,
+          "fbt": 20,
+          "trending": 20,
+          "recent_activity": 20
+        },
+        "pool_size": 100,
+        "ranker_blend": 0.5,
+        "first_timer_popularity": true,
+        "trending_window_days": 30
+      },
+      "val_ndcg10": 0.036170096134052115,
+      "val_pool_recall": 0.12283617227530812,
+      "val_pool_contains_purchase": 0.14730878186968838
+    },
+    {
+      "stage": "quotas_pool",
+      "config": {
+        "quotas": {
+          "collaborative": 40,
+          "content": 15,
+          "fbt": 15,
+          "trending": 15,
+          "recent_activity": 15
+        },
+        "pool_size": 100,
+        "ranker_blend": 0.5,
+        "first_timer_popularity": true,
+        "trending_window_days": 30
+      },
+      "val_ndcg10": 0.035205074303457394,
+      "val_pool_recall": 0.13121451322531505,
+      "val_pool_contains_purchase": 0.15702144880615135
+    },
+    {
+      "stage": "quotas_pool",
+      "config": {
+        "quotas": {
+          "collaborative": 60,
+          "content": 10,
+          "fbt": 10,
+          "trending": 10,
+          "recent_activity": 10
+        },
+        "pool_size": 100,
+        "ranker_blend": 0.5,
+        "first_timer_popularity": true,
+        "trending_window_days": 30
+      },
+      "val_ndcg10": 0.034675476863857996,
+      "val_pool_recall": 0.13519595623874808,
+      "val_pool_contains_purchase": 0.16268717118575476
+    },
+    {
+      "stage": "quotas_pool",
+      "config": {
+        "quotas": {
+          "collaborative": 80,
+          "content": 5,
+          "fbt": 5,
+          "trending": 5,
+          "recent_activity": 5
+        },
+        "pool_size": 100,
+        "ranker_blend": 0.5,
+        "first_timer_popularity": true,
+        "trending_window_days": 30
+      },
+      "val_ndcg10": 0.034386164956697086,
+      "val_pool_recall": 0.1349536075335826,
+      "val_pool_contains_purchase": 0.16147308781869688
+    },
+    {
+      "stage": "quotas_pool",
+      "config": {
+        "quotas": {
+          "collaborative": 20,
+          "content": 32,
+          "fbt": 32,
+          "trending": 32,
+          "recent_activity": 32
+        },
+        "pool_size": 150,
+        "ranker_blend": 0.5,
+        "first_timer_popularity": true,
+        "trending_window_days": 30
+      },
+      "val_ndcg10": 0.03529162846403329,
+      "val_pool_recall": 0.14655172413793102,
+      "val_pool_contains_purchase": 0.1772561715904492
+    },
+    {
+      "stage": "quotas_pool",
+      "config": {
+        "quotas": {
+          "collaborative": 40,
+          "content": 27,
+          "fbt": 27,
+          "trending": 27,
+          "recent_activity": 27
+        },
+        "pool_size": 150,
+        "ranker_blend": 0.5,
+        "first_timer_popularity": true,
+        "trending_window_days": 30
+      },
+      "val_ndcg10": 0.03699696638247096,
+      "val_pool_recall": 0.15337210912615978,
+      "val_pool_contains_purchase": 0.1849453662484824
+    },
+    {
+      "stage": "quotas_pool",
+      "config": {
+        "quotas": {
+          "collaborative": 60,
+          "content": 22,
+          "fbt": 22,
+          "trending": 22,
+          "recent_activity": 22
+        },
+        "pool_size": 150,
+        "ranker_blend": 0.5,
+        "first_timer_popularity": true,
+        "trending_window_days": 30
+      },
+      "val_ndcg10": 0.03609802448725072,
+      "val_pool_recall": 0.15544938374186398,
+      "val_pool_contains_purchase": 0.18939700526102793
+    },
+    {
+      "stage": "quotas_pool",
+      "config": {
+        "quotas": {
+          "collaborative": 80,
+          "content": 17,
+          "fbt": 17,
+          "trending": 17,
+          "recent_activity": 17
+        },
+        "pool_size": 150,
+        "ranker_blend": 0.5,
+        "first_timer_popularity": true,
+        "trending_window_days": 30
+      },
+      "val_ndcg10": 0.03702429707295177,
+      "val_pool_recall": 0.15787287079351892,
+      "val_pool_contains_purchase": 0.19182517199514368
+    },
+    {
+      "stage": "blend_first_timer",
+      "config": {
+        "quotas": {
+          "collaborative": 80,
+          "content": 17,
+          "fbt": 17,
+          "trending": 17,
+          "recent_activity": 17
+        },
+        "pool_size": 150,
+        "ranker_blend": 0.0,
+        "first_timer_popularity": true,
+        "trending_window_days": 30
+      },
+      "val_ndcg10": 0.026592825026281113
+    },
+    {
+      "stage": "blend_first_timer",
+      "config": {
+        "quotas": {
+          "collaborative": 80,
+          "content": 17,
+          "fbt": 17,
+          "trending": 17,
+          "recent_activity": 17
+        },
+        "pool_size": 150,
+        "ranker_blend": 0.0,
+        "first_timer_popularity": false,
+        "trending_window_days": 30
+      },
+      "val_ndcg10": 0.023354061829101096
+    },
+    {
+      "stage": "blend_first_timer",
+      "config": {
+        "quotas": {
+          "collaborative": 80,
+          "content": 17,
+          "fbt": 17,
+          "trending": 17,
+          "recent_activity": 17
+        },
+        "pool_size": 150,
+        "ranker_blend": 0.25,
+        "first_timer_popularity": true,
+        "trending_window_days": 30
+      },
+      "val_ndcg10": 0.035016631423072035
+    },
+    {
+      "stage": "blend_first_timer",
+      "config": {
+        "quotas": {
+          "collaborative": 80,
+          "content": 17,
+          "fbt": 17,
+          "trending": 17,
+          "recent_activity": 17
+        },
+        "pool_size": 150,
+        "ranker_blend": 0.25,
+        "first_timer_popularity": false,
+        "trending_window_days": 30
+      },
+      "val_ndcg10": 0.034883797526122536
+    },
+    {
+      "stage": "blend_first_timer",
+      "config": {
+        "quotas": {
+          "collaborative": 80,
+          "content": 17,
+          "fbt": 17,
+          "trending": 17,
+          "recent_activity": 17
+        },
+        "pool_size": 150,
+        "ranker_blend": 0.5,
+        "first_timer_popularity": true,
+        "trending_window_days": 30
+      },
+      "val_ndcg10": 0.03702429707295177
+    },
+    {
+      "stage": "blend_first_timer",
+      "config": {
+        "quotas": {
+          "collaborative": 80,
+          "content": 17,
+          "fbt": 17,
+          "trending": 17,
+          "recent_activity": 17
+        },
+        "pool_size": 150,
+        "ranker_blend": 0.5,
+        "first_timer_popularity": false,
+        "trending_window_days": 30
+      },
+      "val_ndcg10": 0.037428180431715224
+    },
+    {
+      "stage": "blend_first_timer",
+      "config": {
+        "quotas": {
+          "collaborative": 80,
+          "content": 17,
+          "fbt": 17,
+          "trending": 17,
+          "recent_activity": 17
+        },
+        "pool_size": 150,
+        "ranker_blend": 0.75,
+        "first_timer_popularity": true,
+        "trending_window_days": 30
+      },
+      "val_ndcg10": 0.03806202319855166
+    },
+    {
+      "stage": "blend_first_timer",
+      "config": {
+        "quotas": {
+          "collaborative": 80,
+          "content": 17,
+          "fbt": 17,
+          "trending": 17,
+          "recent_activity": 17
+        },
+        "pool_size": 150,
+        "ranker_blend": 0.75,
+        "first_timer_popularity": false,
+        "trending_window_days": 30
+      },
+      "val_ndcg10": 0.03862851238270223
+    },
+    {
+      "stage": "blend_first_timer",
+      "config": {
+        "quotas": {
+          "collaborative": 80,
+          "content": 17,
+          "fbt": 17,
+          "trending": 17,
+          "recent_activity": 17
+        },
+        "pool_size": 150,
+        "ranker_blend": 1.0,
+        "first_timer_popularity": true,
+        "trending_window_days": 30
+      },
+      "val_ndcg10": 0.03669231444590812
+    },
+    {
+      "stage": "blend_first_timer",
+      "config": {
+        "quotas": {
+          "collaborative": 80,
+          "content": 17,
+          "fbt": 17,
+          "trending": 17,
+          "recent_activity": 17
+        },
+        "pool_size": 150,
+        "ranker_blend": 1.0,
+        "first_timer_popularity": false,
+        "trending_window_days": 30
+      },
+      "val_ndcg10": 0.03728856330144004
+    }
+  ]
+}
