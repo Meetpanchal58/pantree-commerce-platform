@@ -1,0 +1,52 @@
+{
+  "customers": 33060,
+  "buyers": 11510,
+  "paid_orders": 29198,
+  "average_order_value": 3294.2629258853344,
+  "festival_uplift_avg": 0.39160981133695166,
+  "diwali_uplift": {
+    "Oct 2025": 0.8284809700282225,
+    "Nov 2025": 0.7456786921201948
+  },
+  "price_change_paid_vs_list": 0.08606985895822161,
+  "sessions": 821728,
+  "session_conversion": 0.03200329062658203,
+  "cart_to_purchase": 0.10415627005061667,
+  "cod_rto": 0.06379851038808311,
+  "prepaid_rto": 0.02565136320112886,
+  "return_rate": 0.1697272510977008,
+  "size_fit_share": 0.39964317573595004,
+  "return_rate_by_category": {
+    "Accessories": 0.12548984681154257,
+    "Apparel": 0.17816590280358396,
+    "Footwear": 0.19682922306693862
+  },
+  "best_channel": "Referral",
+  "best_channel_value": 4425.498010768771,
+  "worst_channel": "Social Ads",
+  "worst_channel_value": 1534.417062204192,
+  "repeat_buyer_share": 0.5560382276281495,
+  "repeat_revenue_share": 0.8294371455531212,
+  "churn_stored_feature_leaky_rows": 0,
+  "churn": {
+    "model": "Logistic regression",
+    "test_auc": 0.6045483832631693,
+    "test_auc_ci": "0.590\u20130.620",
+    "pr_auc": 0.6360766330925032,
+    "base_rate": 0.5638557309716339,
+    "top_decile_precision": 0.6782051282051282,
+    "top_decile_lift": 1.2027990334273058,
+    "brier": 0.24756784468293663,
+    "logreg_auc": 0.6045483832631693,
+    "hgb_auc": 0.5870690998454253,
+    "rule_auc": 0.54516304699528,
+    "stored_features_auc": 0.5686843682368561,
+    "test_rows": 7791,
+    "top_decile_capture": 0.12019121329387662,
+    "top_features": [
+      "orders_total",
+      "orders_90d",
+      "avg_order_value"
+    ]
+  }
+}
