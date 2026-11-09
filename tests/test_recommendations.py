@@ -6,7 +6,8 @@ import pandas as pd
 
 from recommendations.candidates import collaborative, fbt, popularity
 from recommendations.candidates.common import gender_is_compatible
-from recommendations.serve import SURFACE_CONFIG, SUB_SURFACES, _similar_fallback
+from recommendations import serve
+from recommendations.serve import SURFACE_CONFIG, _similar_fallback
 
 
 class RecommendationSafetyTests(unittest.TestCase):
@@ -164,10 +165,13 @@ class RecommendationSafetyTests(unittest.TestCase):
 
     def test_pdp_recommendations_return_the_full_candidate_pool(self):
         self.assertEqual(SURFACE_CONFIG["product"]["top_k"], 100)
-        self.assertEqual(SUB_SURFACES["pdp-fbt"]["top_k"], 50)
-        self.assertEqual(SUB_SURFACES["pdp-fbt"]["max_candidates"], 50)
-        self.assertEqual(SUB_SURFACES["pdp-similar"]["top_k"], 100)
-        self.assertEqual(SUB_SURFACES["pdp-similar"]["max_candidates"], 100)
+
+    def test_only_storefront_surfaces_remain(self):
+        self.assertEqual(set(SURFACE_CONFIG), {"homepage", "product", "cart"})
+        for removed in ("SUB_SURFACES", "SURFACE_SUB_SECTIONS", "recommend_sections"):
+            self.assertFalse(hasattr(serve, removed), removed)
+        with self.assertRaises(ValueError):
+            serve.recommend("c1", "checkout", {})
 
     def test_gender_compatibility_rejects_mismatched_audience(self):
         self.assertTrue(gender_is_compatible("Men", "Men"))

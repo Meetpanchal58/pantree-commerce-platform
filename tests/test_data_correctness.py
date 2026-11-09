@@ -161,3 +161,25 @@ class ColdStartOrderTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PurchasedSetTests(unittest.TestCase):
+    def test_exclusions_use_the_precomputed_set_not_a_transaction_scan(self):
+        from recommendations import serve
+
+        with (
+            patch.object(serve, "customer_histories_ready", return_value=True),
+            patch.object(serve, "purchased_products", return_value={"c1": frozenset({"p1", "p2"})}),
+            patch.object(serve, "read_realized_transactions", side_effect=AssertionError("scan")),
+        ):
+            excluded = serve._exclude_purchased("c1", {"purchased_product_ids": ["p9"]})
+        self.assertEqual(excluded, {"p1", "p2", "p9"})
+
+    def test_purchased_products_is_built_from_histories(self):
+        from recommendations.candidates import common
+
+        common.purchased_products.cache_clear()
+        self.addCleanup(common.purchased_products.cache_clear)
+        histories = {"c1": {"bought": ["p1", "p2"], "viewed": []}, "c2": {"bought": [], "viewed": ["p3"]}}
+        with patch.object(common, "customer_histories", return_value=histories):
+            self.assertEqual(common.purchased_products(), {"c1": frozenset({"p1", "p2"})})

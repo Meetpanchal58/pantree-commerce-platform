@@ -162,6 +162,12 @@ def customer_histories(limit: int = 200) -> dict[str, dict]:
     }
 
 
+@lru_cache(maxsize=1)
+def purchased_products() -> dict[str, frozenset]:
+    """Customer -> products they bought, precomputed once at load (no per-request scans)."""
+    return {cid: frozenset(h["bought"]) for cid, h in customer_histories().items() if h["bought"]}
+
+
 def customer_histories_ready() -> bool:
     return customer_histories.cache_info().currsize > 0
 
