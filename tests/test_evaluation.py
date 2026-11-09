@@ -228,3 +228,16 @@ class OracleTests(unittest.TestCase):
         self.assertAlmostEqual(half["value"], 0.5)
         self.assertLess(half["ci_low"], 0.5 + 1e-9)
         self.assertGreater(half["ci_high"], 0.5 - 1e-9)
+
+
+class DeadCodeRemovedTests(unittest.TestCase):
+    def test_legacy_ranker_and_unused_helpers_are_gone(self):
+        import inspect
+
+        from recommendations import evaluate, ranker
+
+        self.assertFalse(hasattr(evaluate.History, "is_positive"))
+        self.assertFalse(hasattr(ranker, "build_training_frame"))
+        self.assertFalse(hasattr(ranker, "LEGACY_FEATURES"))
+        self.assertNotIn("sample_limit", inspect.signature(evaluate.main).parameters)
+        self.assertNotIn("--sample-limit", inspect.getsource(evaluate))

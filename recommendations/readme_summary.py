@@ -22,7 +22,7 @@ README = ROOT / "README.md"
 START, END = "<!-- RESULTS:START -->", "<!-- RESULTS:END -->"
 NAMES = {
     "random": "Random order", "popularity": "Popularity", "retrieval": "Retrieval score (previous production)",
-    "legacy_ranker": "Old ranker (3 features)", "new_ranker": "New ranker (11 features)",
+    "new_ranker": "New ranker (11 features)",
     "production_blend": "Production blend (50/50)", "segment_aware": "**Segment-aware (served)**",
     "oracle": "Oracle (true taste, not deployable)",
 }

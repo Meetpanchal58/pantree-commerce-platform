@@ -19,14 +19,14 @@ Time is split into three periods so nothing is learned from the future:
   period-C orders.
 * Every ordering is compared on the *same* candidate lists, so differences come
   from ranking alone: random, popularity, retrieval score (production without a
-  ranker), the legacy 3-feature ranker, the new ranker, and the production blend.
+  ranker), the ranker, and the production blend.
 
 Results are printed and written to ``recommendations/reports/``.
 """
 import argparse
 import json
-from bisect import bisect_left, bisect_right
-from collections import Counter, defaultdict
+from bisect import bisect_left
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 import sys
@@ -59,9 +59,7 @@ from recommendations.oracle import (  # noqa: E402  (evaluation-only ground trut
 )
 from recommendations.ranker import (  # noqa: E402
     FEATURES,
-    LEGACY_FEATURES,
     MODEL_PATH,
-    build_training_frame,
     candidate_features,
     customer_profile,
     train_ranker,
@@ -150,9 +148,6 @@ class History:
             cid: (g["order_timestamp"].to_numpy(), g["product_id"].to_numpy())
             for cid, g in tx.groupby("customer_id", sort=False)
         }
-        self.future = defaultdict(list)
-        for cid, pid, ts in tx[["customer_id", "product_id", "order_timestamp"]].itertuples(index=False, name=None):
-            self.future[(cid, pid)].append(ts)
 
     def viewed_before(self, cid, ts, limit=200) -> list[str]:
         times, pids = self.views.get(cid, (np.array([], dtype="datetime64[ns]"), np.array([])))
@@ -171,11 +166,6 @@ class History:
     def profile_history(self, cid, ts) -> list[str]:
         return self.bought_list(cid, ts) + self.viewed_before(cid, ts)
 
-    def is_positive(self, cid, pid, ts) -> bool:
-        """Bought the same day, after the query, within seven days."""
-        times = self.future.get((cid, pid), [])
-        i = bisect_right(times, ts)
-        return i < len(times) and times[i] <= ts + EMBARGO and times[i].normalize() == ts.normalize()
 
 
 def customer_state(history: History, cid, ts) -> CustomerState:
@@ -208,7 +198,6 @@ def build_pools(queries, sources: Sources, history: History) -> tuple[pd.DataFra
                 "event_timestamp": ts, "product_id": c["product_id"], "source": c["source"],
                 "retrieval_score": float(c["retrieval_score"]), "score": float(c["retrieval_score"]),
                 "n_sources": c["n_sources"], "label": label,
-                "customer_event_count": q.customer_event_count, "surface_id": 0,
                 "n_purchased": len(purchased - excluded),
                 "first_timer": state.first_timer,
             })
@@ -221,7 +210,7 @@ def build_pools(queries, sources: Sources, history: History) -> tuple[pd.DataFra
     return pd.DataFrame(rows), stats
 
 
-def order_queries(transactions, activity, start, end) -> pd.DataFrame:
+def order_queries(transactions, start, end) -> pd.DataFrame:
     """One query per paid order in [start, end): what did the customer buy?"""
     window = transactions[transactions["order_timestamp"].between(start, end)]
     grouped = window.groupby("order_id").agg(
@@ -230,11 +219,6 @@ def order_queries(transactions, activity, start, end) -> pd.DataFrame:
         purchased=("product_id", lambda s: set(s)),
     ).reset_index()
     grouped["query_time"] = grouped["order_timestamp"] - QUERY_OFFSET
-    counts = {cid: g["event_timestamp"].to_numpy() for cid, g in activity.groupby("customer_id", sort=False)}
-    grouped["customer_event_count"] = [
-        bisect_left(counts.get(cid, np.array([], dtype="datetime64[ns]")), np.datetime64(ts))
-        for cid, ts in zip(grouped["customer_id"], grouped["query_time"])
-    ]
     return grouped.sort_values("query_time").reset_index(drop=True)
 
 
@@ -263,19 +247,18 @@ def rankable(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 # --------------------------------------------------------------------------- main
-def main(sample_limit: int = 400000, use_content: bool = True) -> dict:
+def main(use_content: bool = True) -> dict:
     products = read_products()
     transactions = read_realized_transactions()
     activity = load_activity()
     history = History(activity, transactions)
 
-    frame = build_training_frame(sample_limit=sample_limit)
     times = transactions["order_timestamp"]
     t_test = times.quantile(0.8)
     t_rank = times.quantile(0.6)
     t_end = times.max()
-    queries_b = order_queries(transactions, activity, t_rank, t_test - EMBARGO)
-    queries_c = order_queries(transactions, activity, t_test, t_end)
+    queries_b = order_queries(transactions, t_rank, t_test - EMBARGO)
+    queries_c = order_queries(transactions, t_test, t_end)
     print(f"Periods: ranker orders {t_rank:%Y-%m-%d}..{t_test - EMBARGO:%Y-%m-%d} "
           f"({len(queries_b):,}), test orders {t_test:%Y-%m-%d}..{t_end:%Y-%m-%d} ({len(queries_c):,})")
 
@@ -292,8 +275,6 @@ def main(sample_limit: int = 400000, use_content: bool = True) -> dict:
     test_c = add_features(pools_c, sources_c, history, products)
 
     model = train_ranker(train_b, FEATURES)
-    legacy_train = frame[frame["event_timestamp"] < t_rank - EMBARGO]
-    legacy = train_ranker(legacy_train, LEGACY_FEATURES)
 
     test_all = test_c[test_c["n_purchased"] > 0].copy()
     rng = np.random.default_rng(11)
@@ -301,9 +282,6 @@ def main(sample_limit: int = 400000, use_content: bool = True) -> dict:
     test_all["popularity"] = test_all["product_event_count"]
     test_all["retrieval"] = test_all["retrieval_score"]
     orderings = ["random", "popularity", "retrieval"]
-    if legacy is not None:
-        test_all["legacy_ranker"] = legacy.predict(np.ascontiguousarray(test_all[LEGACY_FEATURES].to_numpy(dtype=np.float32)))
-        orderings.append("legacy_ranker")
     if model is not None:
         raw = model.predict(np.ascontiguousarray(test_all[FEATURES].to_numpy(dtype=np.float32)))
         test_all["new_ranker"] = raw
@@ -367,7 +345,7 @@ def main(sample_limit: int = 400000, use_content: bool = True) -> dict:
     comparisons = {}
     if "new_ranker" in orderings:
         base = scores["end_to_end"]["new_ranker"][10].set_index("session_id")["ndcg"]
-        for other in ("retrieval", "popularity", "legacy_ranker", "random"):
+        for other in ("retrieval", "popularity", "random"):
             if other in orderings:
                 o = scores["end_to_end"][other][10].set_index("session_id")["ndcg"].reindex(base.index)
                 comparisons[f"new_ranker_vs_{other}"] = paired_bootstrap(base.to_numpy(), o.to_numpy())
@@ -441,7 +419,7 @@ def main(sample_limit: int = 400000, use_content: bool = True) -> dict:
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "settings": {
-            "sample_limit": sample_limit, "pool_size": POOL_SIZE, "per_source": POOL_PER_SOURCE,
+            "pool_size": POOL_SIZE, "per_source": POOL_PER_SOURCE,
             "min_pool": MIN_POOL, "embargo_days": EMBARGO.days, "content_source": use_content,
             "t_rank": str(t_rank), "t_test": str(t_test), "t_end": str(t_end),
             "ranker_training_rows": int(len(train_b)),
@@ -469,7 +447,7 @@ def main(sample_limit: int = 400000, use_content: bool = True) -> dict:
 
 NAMES = {
     "random": "Random order", "popularity": "Popularity (most viewed)",
-    "retrieval": "Retrieval score (no ranker)", "legacy_ranker": "Old ranker (3 features)",
+    "retrieval": "Retrieval score (no ranker)",
     "new_ranker": "New ranker (11 features)", "production_blend": "Production blend (50/50)",
     "segment_aware": "Segment-aware (popular for first-timers, blend otherwise)",
     "oracle": "Oracle (true simulator taste, not deployable)",
@@ -582,9 +560,7 @@ def write_report(report: dict) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--sample-limit", type=int, default=400000,
-                        help="Approximate number of click events to sample; 0 uses all events.")
     parser.add_argument("--no-content", action="store_true",
                         help="Skip the sentence-transformer source (no model download).")
     args = parser.parse_args()
-    main(args.sample_limit, use_content=not args.no_content)
+    main(use_content=not args.no_content)

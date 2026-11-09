@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from recommendations.candidates import collaborative  # noqa: E402
-from recommendations.candidates.common import DATA, read_realized_transactions  # noqa: E402
+from recommendations.candidates.common import read_realized_transactions  # noqa: E402
 
 K = 20
 REPORT_DIR = Path(__file__).with_name("reports")
