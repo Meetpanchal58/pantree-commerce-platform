@@ -1,6 +1,6 @@
 # Recommendation evaluation report
 
-Generated 2026-11-09T16:00:23+00:00 by `python -m recommendations.evaluate`.
+Generated 2026-11-09T16:38:26+00:00 by `python -m recommendations.evaluate`.
 
 **Question asked:** for each real order in the held-out period, given everything known one hour before it, does the system rank the products the customer actually bought near the top?
 
@@ -143,7 +143,7 @@ Because the data is synthetic, the true taste function is known. The oracle rank
 
 ## Retrieval ceiling
 
-Ranking **all** eligible products by true taste, the top 100 contains a product the customer bought for **39.6%** of test orders (mean recall@100 33.7%). The actual candidate lists (also up to 150 products) contain one for **20.4%** (mean recall 16.7%). The gap is how much better retrieval could get with perfect knowledge of taste.
+Ranking **all** eligible products by true taste, the top 150 contains a product the customer bought for **46.2%** of test orders (mean recall@150 39.8%). The actual candidate lists (also up to 150 products) contain one for **20.4%** (mean recall 16.7%). The gap is how much better retrieval could get with perfect knowledge of taste.
 
 
 ## Leave-one-source-out ablation (test period)

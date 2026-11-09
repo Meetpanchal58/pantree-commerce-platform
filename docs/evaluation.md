@@ -133,4 +133,22 @@ change the policy: a source whose removal looks helpful on test would have to be
 re-checked on the validation period first.
 
 <!-- ABLATION:START -->
+*Generated from `recommendations/reports/evaluation_report.json` by `python -m recommendations.readme_summary`.*
+
+Policy settings (chosen on the validation period by `python -m recommendations.tune_policy`): pool of 150, quotas collaborative 80, content 17, fbt 17, trending 17, recent_activity 17, ranker weight 0.75 in the blend with the retrieval score, first-time buyers get the same ranker blend, trending window 30 days.
+
+### Leave-one-source-out ablation (test period)
+
+Each row rebuilds the candidate lists without one source, retrains the ranker without it on period B and scores the served policy on the same test orders. The interval is the paired-bootstrap 95% CI of the change in NDCG@10 versus the full system.
+
+| Without | Pool recall | Served NDCG@10 | Change vs full (95% CI) |
+|---|---|---|---|
+| (nothing: full system) | 0.1667 | 0.0386 | – |
+| collaborative | 0.1153 | 0.0294 | -0.0092 (-0.0119 to -0.0066) |
+| content | 0.1609 | 0.0384 | -0.0001 (-0.0015 to +0.0012) |
+| fbt | 0.1655 | 0.0376 | -0.0010 (-0.0023 to +0.0003) |
+| trending | 0.1609 | 0.0340 | -0.0045 (-0.0062 to -0.0030) |
+| recent_activity | 0.1596 | 0.0400 | +0.0014 (+0.0002 to +0.0026) |
+
+**Recall acceptance check (passed):** combined candidate list recall 0.1667 vs 0.1178 for the best single source (collaborative, its own top list of the same size).
 <!-- ABLATION:END -->

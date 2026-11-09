@@ -10,11 +10,11 @@ leads with results; setup is under [How to run](#how-to-run).
 *Generated from `recommendations/reports/evaluation_report.json` by `python -m recommendations.readme_summary`.*
 
 - **Problem:** rank products for the home-page "Recommended for you" row, predicting the exact product bought among 10,000, using only data known one hour before the order.
-- **Method:** 5 retrieval sources (implicit ALS, trending, recent activity, FAISS content similarity, co-purchase) → 11-feature LightGBM LambdaRank → segment-aware policy (popularity for first-time buyers). The evaluated policy is the code the storefront serves (`recommendations/policy.py`).
+- **Method:** 5 retrieval sources (implicit ALS, trending, recent activity, FAISS content similarity, co-purchase) → 11-feature LightGBM LambdaRank → 0.75 ranker + 0.25 retrieval-score blend for every customer (settings chosen on validation). The evaluated policy is the code the storefront serves (`recommendations/policy.py`).
 - **Evaluation:** 3-period temporal split, 7-day embargo, 5,647 held-out orders (of 5,831; see order counts below), paired-bootstrap 95% CIs.
 - **Headline:** served policy NDCG@10 0.0386 vs 0.0239 for retrieval order: +0.0147 absolute (95% CI +0.0122 to +0.0172), +61% relative (95% CI +49% to +76%); 6.2× random. Within lists that contain a bought product (1,191 orders), NDCG@10 is 0.205.
 - **Ceiling:** the served policy captures 83% of the achievable gain from random to an oracle that knows each customer's true taste (95% CI 73% to 94%).
-- **Bottleneck:** candidate lists contain a bought product for 20.4% of orders; the top 100 by true taste would contain one for 39.6%. Next step: better retrieval (taste-aware candidate generation, e.g. a two-tower model), not more ranking features.
+- **Bottleneck:** candidate lists contain a bought product for 20.4% of orders; the top 150 by true taste would contain one for 46.2%. Next step: better retrieval (taste-aware candidate generation, e.g. a two-tower model), not more ranking features.
 - **Caveat:** synthetic data with known ground truth; online impression/click logging and an A/B split are built, but there is no real traffic yet.
 <!-- RESULTS:END -->
 
@@ -168,7 +168,7 @@ Retrieval (is a bought product in the candidate list at all?). Per-source figure
 - recent_activity: 6.2% of test orders
 - content: 4.5% of test orders
 - fbt: 2.6% of test orders
-- all sources combined (candidate list of up to 150): 20.4%; **retrieval ceiling** (top 100 of all eligible products by true taste): 39.6%
+- all sources combined (candidate list of up to 150): 20.4%; **retrieval ceiling** (top 150 of all eligible products by true taste): 46.2%
 
 Order counts: 5,831 paid orders in the test period. 25 came from customers with no earlier activity (cold start); they stay in and are scored with documented default features. 184 only re-bought earlier products (excluded from candidates), leaving 5,647 for the end-to-end tables. 1,191 had a bought product in the list; ranking-only tables also need at least 10 candidates and one not-bought candidate (0 + 0 dropped), leaving 1,191.
 
