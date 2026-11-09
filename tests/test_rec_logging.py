@@ -90,7 +90,7 @@ class OnlineMetricsTests(unittest.TestCase):
             con.execute("""CREATE TABLE clickstream (customer_id TEXT, product_id TEXT,
                            event_type TEXT, event_timestamp TEXT)""")
             con.execute("""CREATE TABLE transactions (customer_id TEXT, product_id TEXT,
-                           order_timestamp TEXT, order_status TEXT)""")
+                           order_timestamp TEXT, order_status TEXT, payment_status TEXT)""")
             with patch.dict(os.environ, {"PANTREE_AB_TEST": "ranker"}):
                 for i in range(40):
                     cust = f"cust-{i}"
@@ -101,8 +101,8 @@ class OnlineMetricsTests(unittest.TestCase):
                     if variant == "treatment" or i % 4 == 0:
                         log_click(con, f"req-{i}", 1, cust, "p1", "2026-07-01T10:01:00", uid)
             con.execute("INSERT INTO clickstream VALUES ('cust-0','p1','add_to_cart','2026-07-01T10:05:00')")
-            con.execute("INSERT INTO transactions VALUES ('cust-0','p1','2026-07-03T09:00:00','Placed')")
-            con.execute("INSERT INTO transactions VALUES ('cust-0','p1','2026-07-20T09:00:00','Placed')")  # too late
+            con.execute("INSERT INTO transactions VALUES ('cust-0','p1','2026-07-03T09:00:00','Placed','Success')")
+            con.execute("INSERT INTO transactions VALUES ('cust-0','p1','2026-07-20T09:00:00','Placed','Success')")  # too late
             con.commit()
             con.close()
 

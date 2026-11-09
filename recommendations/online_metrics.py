@@ -24,6 +24,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from recommendations.candidates.common import purchase_sql
+
 ROOT = Path(__file__).resolve().parents[1]
 REPORT = Path(__file__).with_name("reports") / "online_metrics.md"
 
@@ -51,8 +53,7 @@ def load(db_path: Path) -> pd.DataFrame:
             "SELECT customer_id, product_id, event_timestamp FROM clickstream WHERE event_type='add_to_cart'", con
         ) if "clickstream" in tables else pd.DataFrame(columns=["customer_id", "product_id", "event_timestamp"])
         buys = pd.read_sql(
-            """SELECT customer_id, product_id, order_timestamp FROM transactions
-               WHERE UPPER(COALESCE(order_status,'')) NOT IN ('CANCELLED','RTO','LOST','UNDELIVERED')""", con
+            "SELECT customer_id, product_id, order_timestamp FROM transactions WHERE " + purchase_sql(), con
         ) if "transactions" in tables else pd.DataFrame(columns=["customer_id", "product_id", "order_timestamp"])
     finally:
         con.close()

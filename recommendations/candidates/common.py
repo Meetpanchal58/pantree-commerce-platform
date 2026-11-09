@@ -7,7 +7,26 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA = ROOT / "data"
-EXCLUDED_STATUSES = {"RTO", "CANCELLED", "REFUNDED", "CIC", "CIR", "LOST", "UNDELIVERED"}
+# One definition of "a purchase" for every recommender, evaluation and webapp query:
+# the payment succeeded and the order line was not cancelled, returned to sender,
+# lost or undelivered. CIR lines (paid and delivered, later returned by the
+# customer) ARE purchases. Matches the warehouse's realized-revenue definition.
+NON_PURCHASE_STATUSES = ("RTO", "CANCELLED", "REFUNDED", "CIC", "LOST", "UNDELIVERED")
+PURCHASE_PAYMENT_STATUS = "SUCCESS"
+
+
+def purchase_mask(frame: pd.DataFrame) -> pd.Series:
+    """True for order lines that count as purchases (see NON_PURCHASE_STATUSES)."""
+    status = frame["order_status"].fillna("").astype(str).str.upper()
+    payment = frame["payment_status"].fillna("").astype(str).str.upper()
+    return ~status.isin(NON_PURCHASE_STATUSES) & payment.eq(PURCHASE_PAYMENT_STATUS)
+
+
+def purchase_sql(status_col: str = "order_status", payment_col: str = "payment_status") -> str:
+    """The same rule as a SQL condition, for the live SQLite store."""
+    statuses = ",".join(f"'{s}'" for s in NON_PURCHASE_STATUSES)
+    return (f"UPPER(COALESCE({status_col},'')) NOT IN ({statuses}) "
+            f"AND UPPER(COALESCE({payment_col},'')) = '{PURCHASE_PAYMENT_STATUS}'")
 UNIVERSAL_GENDERS = {"unisex", "all", "all genders", "unisex clothing"}
 
 
@@ -49,8 +68,7 @@ def read_realized_transactions() -> pd.DataFrame:
             "order_status", "payment_status", "quantity", "unit_selling_price",
         ],
     )
-    status = transactions["order_status"].fillna("").str.upper()
-    transactions = transactions.loc[~status.isin(EXCLUDED_STATUSES)].copy()
+    transactions = transactions.loc[purchase_mask(transactions)].copy()
     transactions["order_timestamp"] = pd.to_datetime(
         transactions["order_timestamp"], errors="coerce"
     )
