@@ -67,3 +67,38 @@ settings serving used before the run.
 ALS learns from product views and cart adds in the clickstream, plus order lines
 weighted by quantity. The clickstream `purchase` event is not used, because the
 order line already records the same purchase.
+
+## What is evaluated is what is served
+
+`recommendations/policy.py` holds the personalised "Recommended for you" policy:
+the five candidate sources, the candidate-list rules (dedup, availability, 20 per
+source, filled to 100 by score) and the segment policy (popularity order for
+customers with no purchases; a 50/50 blend of retrieval score and min-max-scaled
+ranker score for everyone else). `serve.recommend(..., intent="personalized")` and
+`evaluate.py` both call it, and `tests/test_policy_parity.py` checks that they
+return identical lists and scores for the same customer and moment.
+
+Each source has one implementation that takes a time:
+
+| Source | Serving | Evaluation |
+|---|---|---|
+| ALS, co-purchase | fitted on all data | fitted on data before the period cut-off (7-day embargo) |
+| Trending (last 30 days), recent activity, product popularity | now | the query time |
+| Content similarity | catalog text (no time dependence) | same |
+
+The evaluation also drops candidates that were not sellable at the query time:
+out of stock at the previous day's close (`inventory.parquet`), not yet launched,
+or already discontinued. Serving applies the same rule to current stock and the
+catalog's active flag.
+
+Two serving-only extras were removed from the personalised row rather than added
+to the evaluation:
+
+- **Deals on viewed items** ranked the biggest markdown in each viewed category.
+  Discounts are only recorded as today's price, so there is no point-in-time
+  price to evaluate it with; keeping it would put an unevaluated source in the
+  served row.
+- **The empty-list popularity fallback** is no longer needed: trending is one of
+  the five sources, so the list is never empty once activity has loaded. While
+  activity is still loading at start-up, the row shows the catalog fallback
+  (highly rated products); this is a warm-up state, not part of the policy.

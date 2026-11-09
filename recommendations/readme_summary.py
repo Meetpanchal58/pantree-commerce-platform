@@ -49,7 +49,8 @@ def build(report: dict) -> str:
         "- **Problem:** rank products for the home-page \"Recommended for you\" row, predicting the exact product "
         "bought among 10,000, using only data known one hour before the order.",
         "- **Method:** 5 retrieval sources (implicit ALS, trending, recent activity, FAISS content similarity, "
-        "co-purchase) → 11-feature LightGBM LambdaRank → segment-aware policy (popularity for first-time buyers).",
+        "co-purchase) → 11-feature LightGBM LambdaRank → segment-aware policy (popularity for first-time buyers). "
+        "The evaluated policy is the code the storefront serves (`recommendations/policy.py`).",
         f"- **Evaluation:** 3-period temporal split, {st['embargo_days']}-day embargo, {oc['orders_with_new_products']:,} "
         f"held-out orders (of {oc['test_orders']:,}; see order counts below), paired-bootstrap 95% CIs.",
         f"- **Headline:** served policy NDCG@10 {served:.4f} vs {rel['retrieval_ndcg10']:.4f} for retrieval order: "

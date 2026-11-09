@@ -40,17 +40,17 @@ to adjust the related-products heading.
 
 | Storefront row | Selection logic |
 |---|---|
-| **Recommended for you** (homepage) | Combines seeded implicit ALS candidates with products related to the customer's recent activity. Interaction strength is weighted (product view < cart addition < purchase); order activity is associated with browsing using a same-customer, same-day soft join. Recent signed-in views, cart additions, wishlists, and purchases from SQLite can immediately seed recommendations. The recent-activity source looks for in-stock candidates in the same product type and compatible audience, prioritizing recent category activity (or ratings/reviews when activity is absent), and may add discounted products related to those seeds. Already-purchased products are excluded. If there are no usable personalized candidates, the row falls back to recent popularity, then highly rated in-stock catalog products. The UI labels that fallback “Popular while we learn your taste.” Customers with no purchases yet see trending products first, because the evaluation showed popularity predicts first purchases best. |
+| **Recommended for you** (homepage) | Runs the shared policy in `recommendations/policy.py`, the same code the offline evaluation scores. Five sources: seeded implicit ALS (views < cart additions < order quantity), products similar to the anchor (the latest purchase, else the latest viewed product), products bought in the same orders as the anchor, trending products (last 30 days of views, cart additions and wishlists), and popular items of the same type and audience as the customer's recent products. Recent signed-in views and purchases from SQLite are merged with warehouse history. Already-purchased and unavailable (inactive or out-of-stock) products are dropped; up to 20 come from each source, then the list is filled to 100 by score. Customers with no purchases see the list ordered by popularity (the UI labels it “Popular while we learn your taste”), because the evaluation showed popularity predicts first purchases best; everyone else gets a 50/50 blend of retrieval score and the LightGBM ranker. While activity data is still loading at start-up the row shows highly rated in-stock products. |
 | **Frequently bought together** (product page) | Tries evidence in order: products that appeared in the same realized orders as the anchor; products viewed in the same browsing sessions; product types that shoppers buy together more often than chance (learned from orders); then other highly rated products from the same department. It moves to the next source if the earlier source has no eligible results. Candidates must be active, in stock, a different product type from the anchor, and audience-compatible; the anchor and already-purchased products are removed. Duplicate items across the two displayed product-page rows are removed. The heading changes when results come solely from co-view, learned product-type, or department-fallback evidence. |
 | **Similar products** (product page) | Searches a FAISS index of Sentence Transformer embeddings built from product name, description, and attributes. Results are filtered to the same product type and a compatible gender/audience (including universal categories), with inactive, out-of-stock, purchased, anchor, and duplicate-row products removed. If there are too few embedding matches, it fills from the same type/audience using rating, review count, and product ID as deterministic tie-breaks. |
 
 These are retrieval rules, not a guarantee of purchase or user-specific preference. Source scores are
 normalized retrieval scores and may be blended with the optional LightGBM ranker; they should be
 used to compare/rank candidates for this service, not interpreted as purchase probabilities.
-Trending is a separate homepage row: it aggregates recent warehouse product interactions (views,
-cart additions, and wishlists) and realized order quantities over the latest 30 days in the
-dataset, and falls back to highly rated in-stock catalog products when those counts are
-unavailable. All rows filter against the current SQLite stock before returning results.
+Trending is a separate homepage row: it counts warehouse product interactions (views, cart
+additions, and wishlists) over the latest 30 days in the dataset (the same trending source the
+personalised row uses), and falls back to highly rated in-stock catalog products while those
+counts are loading. All rows filter against the current SQLite stock before returning results.
 
 The recommendation API accepts the `homepage`, `product`, and `cart` surfaces. Product-page
 requests use `product_id` and the `similar` or `complementary` intent; homepage requests use the
@@ -86,12 +86,14 @@ popularity/affinity/deals still work.
 ### How the three recommendation rows work
 
 - **Recommended for you (home page):** looks at what the signed-in shopper viewed, added to the
-  cart, wishlisted, or bought. One part finds available items of related product types and
-  audiences; another uses broader patterns from the generated shopping history. If there is not
-  enough activity to personalize yet, it shows popular products instead.
+  cart, wishlisted, or bought, and gathers candidates from five sources (shopping patterns of
+  similar customers, similar products, products bought together, trending products, and popular
+  items like the ones they looked at). Shoppers who have not bought anything yet see the most
+  popular of those first; everyone else gets them ordered by the ranking model.
 - **Frequently bought together (product page):** first looks for products purchased in the same
   orders as the current product. If there is not enough order evidence, it tries products viewed
-  together, then known compatible pairings, then other well-rated products from the department.
+  together, then product types shoppers often buy together, then other well-rated products from
+  the department.
 - **Similar products (product page):** compares the product's name, description, and details with
   other catalog items. It keeps items of the same product type and a compatible audience; if
   there are too few close matches, it fills the row with well-rated items of that type.
@@ -110,12 +112,14 @@ final period: **given everything known one hour before the order, does the syste
 products the customer actually bought near the top?** That is the job of the home-page
 "Recommended for you" row.
 
-- **Three time periods, no peeking.** Retrieval sources (ALS, co-purchases, trending, recent
-  activity) learn only from data before each period's cut-off, with a 7-day gap. The ranker is
+- **Three time periods, no peeking.** ALS and co-purchases learn only from data before each
+  period's cut-off, with a 7-day gap; trending, recent activity, popularity and stock are taken as
+  of each query time. The ranker is
   trained on candidate lists for orders in the middle period (B) and everything is scored on the
   final period (C).
 - **Same lists, different orderings.** For each order a candidate list of up to 100 products is
-  built (20 per source, then filled by score; already-bought products excluded). Random order,
+  built (20 per source, then filled by score; already-bought and then-unavailable products
+  excluded) by the same code the storefront serves. Random order,
   popularity, retrieval score (production without a ranker), the old 3-feature ranker, the new
   11-feature ranker, the production 50/50 blend and a segment-aware policy all rank the *same*
   lists, so differences come from ranking alone.
@@ -214,8 +218,10 @@ customers or products.
   persists the FAISS index, and over-retrieves similar products for post-filtering.
 - `recommendations/candidates/fbt.py` prioritizes same-order purchases, then same-session co-views,
   then product types bought together more often than chance, all learned from data before the cut-off.
-- `recommendations/candidates/popularity.py` aggregates recent product views/orders for
-  trending results and ranks markdowns for deal candidates.
+- `recommendations/candidates/popularity.py` counts product activity as of any moment, for
+  trending, recent-activity candidates and the ranker's popularity feature; it also ranks
+  markdowns for deal candidates.
+- `recommendations/policy.py` is the personalised policy shared by serving and evaluation.
 - `recommendations/candidates/fusion.py` deduplicates source results while preserving the
   winning source tag and reason.
 - `recommendations/ranker.py` builds the 11 point-in-time candidate features (shared by training
