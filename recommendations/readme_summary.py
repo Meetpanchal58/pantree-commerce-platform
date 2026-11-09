@@ -19,6 +19,7 @@ REPORT = Path(__file__).with_name("reports") / "evaluation_report.json"
 ALS_REPORT = Path(__file__).with_name("reports") / "als_tuning.json"
 INSIGHTS = ROOT / "analysis" / "insights_summary.json"
 README = ROOT / "README.md"
+EVALUATION_DOC = ROOT / "docs" / "evaluation.md"
 START, END = "<!-- RESULTS:START -->", "<!-- RESULTS:END -->"
 NAMES = {
     "random": "Random order", "popularity": "Popularity", "retrieval": "Retrieval score (previous production)",
@@ -26,6 +27,16 @@ NAMES = {
     "production_blend": "Ranker blend (all customers)", "segment_aware": "**Segment-aware (served)**",
     "oracle": "Oracle (true taste, not deployable)",
 }
+
+
+def policy_summary(settings: dict) -> str:
+    """One phrase describing the served ordering, from the settings the report was run with."""
+    p = settings.get("policy") or {}
+    weight = p.get("ranker_blend", 0.5)
+    blend = f"{weight:.2f} ranker + {1 - weight:.2f} retrieval-score blend"
+    if p.get("first_timer_popularity", True):
+        return f"segment-aware policy (popularity for first-time buyers, {blend} otherwise)"
+    return f"{blend} for every customer (settings chosen on validation)"
 
 
 def pct(x, digits=1):
@@ -49,7 +60,7 @@ def build(report: dict) -> str:
         "- **Problem:** rank products for the home-page \"Recommended for you\" row, predicting the exact product "
         "bought among 10,000, using only data known one hour before the order.",
         "- **Method:** 5 retrieval sources (implicit ALS, trending, recent activity, FAISS content similarity, "
-        "co-purchase) → 11-feature LightGBM LambdaRank → segment-aware policy (popularity for first-time buyers). "
+        f"co-purchase) → 11-feature LightGBM LambdaRank → {policy_summary(st)}. "
         "The evaluated policy is the code the storefront serves (`recommendations/policy.py`).",
         f"- **Evaluation:** 3-period temporal split, {st['embargo_days']}-day embargo, {oc['orders_with_new_products']:,} "
         f"held-out orders (of {oc['test_orders']:,}; see order counts below), paired-bootstrap 95% CIs.",
@@ -204,7 +215,24 @@ def main() -> None:
     if INSIGHTS.exists():
         text = replace_block(text, "INSIGHTS", build_insights(json.loads(INSIGHTS.read_text())))
     README.write_text(text)
+    if EVALUATION_DOC.exists():
+        doc = EVALUATION_DOC.read_text()
+        if "<!-- ABLATION:START -->" in doc:
+            EVALUATION_DOC.write_text(replace_block(doc, "ABLATION", build_policy_block(report)))
     print(build(report))
+
+
+def build_policy_block(report: dict) -> str:
+    """Policy settings and the leave-one-source-out ablation, for docs/evaluation.md."""
+    from recommendations.evaluate import ablation_lines, policy_text
+
+    lines = ["*Generated from `recommendations/reports/evaluation_report.json` by "
+             "`python -m recommendations.readme_summary`.*", ""]
+    if report["settings"].get("policy"):
+        lines.append(policy_text(report["settings"]))
+    lines += [line.replace("## Leave-one-source-out ablation (test period)", "### Leave-one-source-out ablation (test period)")
+              for line in ablation_lines(report)]
+    return "\n".join(lines).strip()
 
 
 if __name__ == "__main__":

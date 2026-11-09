@@ -88,3 +88,24 @@ class AblationAndRecallTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReportingTests(unittest.TestCase):
+    def test_retrieval_ceiling_uses_the_pool_size(self):
+        import inspect
+
+        self.assertIn("k=config.pool_size", inspect.getsource(evaluate.main))
+
+    def test_method_line_describes_the_chosen_ordering(self):
+        from recommendations.readme_summary import policy_summary
+
+        off = policy.PolicyConfig(ranker_blend=0.75, first_timer_popularity=False).to_json()
+        on = policy.PolicyConfig(ranker_blend=0.5, first_timer_popularity=True).to_json()
+        self.assertIn("for every customer", policy_summary({"policy": off}))
+        self.assertIn("0.75 ranker", policy_summary({"policy": off}))
+        self.assertIn("popularity for first-time buyers", policy_summary({"policy": on}))
+
+    def test_evaluation_doc_has_the_generated_ablation_block(self):
+        doc = (Path(__file__).resolve().parents[1] / "docs" / "evaluation.md").read_text()
+        self.assertIn("<!-- ABLATION:START -->", doc)
+        self.assertIn("<!-- ABLATION:END -->", doc)

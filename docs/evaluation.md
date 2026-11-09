@@ -87,10 +87,12 @@ order line already records the same purchase.
 ## What is evaluated is what is served
 
 `recommendations/policy.py` holds the personalised "Recommended for you" policy:
-the five candidate sources, the candidate-list rules (dedup, availability, 20 per
-source, filled to 100 by score) and the segment policy (popularity order for
-customers with no purchases; a 50/50 blend of retrieval score and min-max-scaled
-ranker score for everyone else). `serve.recommend(..., intent="personalized")` and
+the five candidate sources, the candidate-list rules (dedup, availability, a
+quota per source, then filled to the pool size by score) and the ordering (a
+blend of the retrieval score and the min-max-scaled ranker score, with optional
+popularity order for customers with no purchases). The quotas, pool size, blend
+weight, first-timer rule and trending window are read from
+`recommendations/reports/policy_config.json`; see "Policy settings" below. `serve.recommend(..., intent="personalized")` and
 `evaluate.py` both call it, and `tests/test_policy_parity.py` checks that they
 return identical lists and scores for the same customer and moment.
 
@@ -118,3 +120,17 @@ to the evaluation:
   the five sources, so the list is never empty once activity has loaded. While
   activity is still loading at start-up, the row shows the catalog fallback
   (highly rated products); this is a warm-up state, not part of the policy.
+
+## Policy settings and the source ablation
+
+`python -m recommendations.tune_policy` chooses the per-source quotas, pool size,
+ranker blend weight, first-timer rule and trending window on a validation slice of
+period B (the ranker is fitted on the earlier part of B); the test period is not
+used. `recommendations/reports/policy_tuning.md` lists every setting tried.
+
+The ablation below is reported once, on the test period, and is **not** used to
+change the policy: a source whose removal looks helpful on test would have to be
+re-checked on the validation period first.
+
+<!-- ABLATION:START -->
+<!-- ABLATION:END -->

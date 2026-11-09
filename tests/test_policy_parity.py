@@ -176,6 +176,19 @@ class PolicyParityTests(unittest.TestCase):
             self.assertEqual(self.served("c4"), self.evaluated("c4"))
             self.assertLessEqual(len(self.served("c1")), 5)
 
+    def test_items_say_how_the_row_was_ordered(self):
+        with patch.object(policy, "load_config", return_value=policy.DEFAULT_CONFIG):
+            with patch.object(popularity, "activity_ready", return_value=True):
+                first = serve.recommend("c4", "homepage", {"intent": "personalized"})
+                repeat = serve.recommend("c1", "homepage", {"intent": "personalized"})
+        self.assertEqual({i["ordering"] for i in first}, {"popularity"})
+        self.assertEqual({i["ordering"] for i in repeat}, {"ranker_blend"})
+        off = policy.PolicyConfig(first_timer_popularity=False)
+        with patch.object(policy, "load_config", return_value=off), \
+                patch.object(popularity, "activity_ready", return_value=True):
+            first = serve.recommend("c4", "homepage", {"intent": "personalized"})
+        self.assertEqual({(i["segment"], i["ordering"]) for i in first}, {("first_order", "ranker_blend")})
+
     def test_first_timer_order_is_popularity(self):
         with patch.object(policy, "load_config", return_value=policy.DEFAULT_CONFIG):
             served = self.served("c4")

@@ -463,7 +463,7 @@ def main(use_content: bool = True, ablation: bool = True) -> dict:
                 for o in orderings
             }
 
-    ceiling = retrieval_ceiling(queries_c, history, profiles, taste_catalog, catalog_median)
+    ceiling = retrieval_ceiling(queries_c, history, profiles, taste_catalog, catalog_median, k=config.pool_size)
     per_order = test_c.groupby("session_id").agg(hits=("label", "sum"), n=("n_purchased", "first"))
     per_order = per_order[per_order["n"] > 0]
     ceiling["candidate_list_hit_rate"] = retrieval_stats["pool_contains_purchase"] / retrieval_stats["queries"]

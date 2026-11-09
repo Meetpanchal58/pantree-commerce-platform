@@ -40,7 +40,7 @@ to adjust the related-products heading.
 
 | Storefront row | Selection logic |
 |---|---|
-| **Recommended for you** (homepage) | Runs the shared policy in `recommendations/policy.py`, the same code the offline evaluation scores. Five sources: seeded implicit ALS (views < cart additions < order quantity), products similar to the anchor (the latest purchase, else the latest viewed product), products bought in the same orders as the anchor, trending products (last 30 days of views, cart additions and wishlists), and popular items of the same type and audience as the customer's recent products. Recent signed-in views and purchases from SQLite are merged with warehouse history. Already-purchased and unavailable (inactive or out-of-stock) products are dropped; up to 20 come from each source, then the list is filled to 100 by score. Customers with no purchases see the list ordered by popularity (the UI labels it “Popular while we learn your taste”), a rule adopted when an earlier evaluation found popularity beat the ranker for first purchases (in the current test period the ranker alone scores higher for first-time buyers; the rule will be re-chosen on the validation period, not changed on test); everyone else gets a 50/50 blend of retrieval score and the LightGBM ranker. While activity data is still loading at start-up the row shows highly rated in-stock products. |
+| **Recommended for you** (homepage) | Runs the shared policy in `recommendations/policy.py`, the same code the offline evaluation scores. Five sources: seeded implicit ALS (views < cart additions < order quantity), products similar to the anchor (the latest purchase, else the latest viewed product), products bought in the same orders as the anchor, trending products (last 30 days of views, cart additions and wishlists), and popular items of the same type and audience as the customer's recent products. Recent signed-in views and purchases from SQLite are merged with warehouse history. Already-purchased and unavailable (inactive or out-of-stock) products are dropped; each source fills its quota (set in `recommendations/reports/policy_config.json`, chosen on the validation period), then the list is filled to the pool size by score. The list is ordered by a blend of the LightGBM ranker score and the retrieval score; the blend weight and whether customers with no purchases get popularity order instead are also chosen on the validation period (the current values are listed under the results). When popularity order is used, the UI labels the row “Popular while we learn your taste”. While activity data is still loading at start-up the row shows highly rated in-stock products. |
 | **Frequently bought together** (product page) | Tries evidence in order: products that appeared in the same realized orders as the anchor; products viewed in the same browsing sessions; product types that shoppers buy together more often than chance (learned from orders); then other highly rated products from the same department. It moves to the next source if the earlier source has no eligible results. Candidates must be active, in stock, a different product type from the anchor, and audience-compatible; the anchor and already-purchased products are removed. Duplicate items across the two displayed product-page rows are removed. The heading changes when results come solely from co-view, learned product-type, or department-fallback evidence. |
 | **Similar products** (product page) | Searches a FAISS index of Sentence Transformer embeddings built from product name, description, and attributes. Results are filtered to the same product type and a compatible gender/audience (including universal categories), with inactive, out-of-stock, purchased, anchor, and duplicate-row products removed. If there are too few embedding matches, it fills from the same type/audience using rating, review count, and product ID as deterministic tie-breaks. |
 
@@ -88,8 +88,9 @@ trending, recent activity, frequently-bought-together and deals still work.
 - **Recommended for you (home page):** looks at what the signed-in shopper viewed, added to the
   cart, wishlisted, or bought, and gathers candidates from five sources (shopping patterns of
   similar customers, similar products, products bought together, trending products, and popular
-  items like the ones they looked at). Shoppers who have not bought anything yet see the most
-  popular of those first; everyone else gets them ordered by the ranking model.
+  items like the ones they looked at), then orders them with the ranking model blended with
+  each source's own score. How many candidates each source contributes, and how much weight the
+  ranking model gets, were chosen by testing settings on an earlier period of data.
 - **Frequently bought together (product page):** first looks for products purchased in the same
   orders as the current product. If there is not enough order evidence, it tries products viewed
   together, then product types shoppers often buy together, then other well-rated products from
@@ -117,11 +118,11 @@ products the customer actually bought near the top?** That is the job of the hom
   of each query time. The ranker is
   trained on candidate lists for orders in the middle period (B) and everything is scored on the
   final period (C).
-- **Same lists, different orderings.** For each order a candidate list of up to 100 products is
-  built (20 per source, then filled by score; already-bought and then-unavailable products
-  excluded) by the same code the storefront serves. Random order,
+- **Same lists, different orderings.** For each order a candidate list is built (a quota per
+  source, then filled by score to the pool size; already-bought and then-unavailable products
+  excluded) by the same code the storefront serves, using the settings chosen on validation. Random order,
   popularity, retrieval score (production without a ranker), the
-  11-feature ranker, the production 50/50 blend and a segment-aware policy all rank the *same*
+  11-feature ranker, the ranker blend and the served policy all rank the *same*
   lists, so differences come from ranking alone.
 - **Two views.** *End to end* uses every test order (a bought product missing from the list counts
   as a miss). *Ranking only* uses orders whose list contains a bought product.
