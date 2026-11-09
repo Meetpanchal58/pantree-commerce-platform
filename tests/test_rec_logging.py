@@ -90,7 +90,7 @@ class OnlineMetricsTests(unittest.TestCase):
             con.execute("""CREATE TABLE clickstream (customer_id TEXT, product_id TEXT,
                            event_type TEXT, event_timestamp TEXT)""")
             con.execute("""CREATE TABLE transactions (customer_id TEXT, product_id TEXT,
-                           order_timestamp TEXT, order_status TEXT)""")
+                           order_timestamp TEXT, order_status TEXT, payment_status TEXT)""")
             with patch.dict(os.environ, {"PANTREE_AB_TEST": "ranker"}):
                 for i in range(40):
                     cust = f"cust-{i}"
@@ -101,8 +101,8 @@ class OnlineMetricsTests(unittest.TestCase):
                     if variant == "treatment" or i % 4 == 0:
                         log_click(con, f"req-{i}", 1, cust, "p1", "2026-07-01T10:01:00", uid)
             con.execute("INSERT INTO clickstream VALUES ('cust-0','p1','add_to_cart','2026-07-01T10:05:00')")
-            con.execute("INSERT INTO transactions VALUES ('cust-0','p1','2026-07-03T09:00:00','Placed')")
-            con.execute("INSERT INTO transactions VALUES ('cust-0','p1','2026-07-20T09:00:00','Placed')")  # too late
+            con.execute("INSERT INTO transactions VALUES ('cust-0','p1','2026-07-03T09:00:00','Placed','Success')")
+            con.execute("INSERT INTO transactions VALUES ('cust-0','p1','2026-07-20T09:00:00','Placed','Success')")  # too late
             con.commit()
             con.close()
 
@@ -152,3 +152,27 @@ class ServingControlGroupTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClickValidationTests(unittest.TestCase):
+    def test_unknown_product_logs_no_click_and_no_view(self):
+        from unittest.mock import MagicMock
+
+        from webapp.routes import catalog
+
+        con = sqlite3.connect(":memory:")
+        con.row_factory = sqlite3.Row
+        con.execute("CREATE TABLE products (product_id TEXT)")
+        con.execute("CREATE TABLE inventory (product_id TEXT, current_stock INTEGER)")
+        session = {"customer_id": "cust-1", "device_type": "web"}
+        with (
+            patch.object(catalog, "db", return_value=con),
+            patch.object(catalog, "get_session", return_value=session),
+            patch.object(catalog, "ensure_wishlist"),
+            patch.object(catalog, "log_event") as log_event,
+            patch.object(catalog, "log_click") as log_click,
+        ):
+            response = catalog.pdp("no-such-product", MagicMock(), sid="s", rec="req-1", pos=1)
+        self.assertEqual(response.status_code, 303)
+        log_click.assert_not_called()
+        log_event.assert_not_called()

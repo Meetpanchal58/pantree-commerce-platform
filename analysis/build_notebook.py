@@ -433,7 +433,7 @@ report_path = ROOT / "recommendations" / "reports" / "evaluation_report.json"
 if report_path.exists():
     report = json.loads(report_path.read_text())
     names = {"random": "Random", "popularity": "Popularity", "retrieval": "Retrieval score (no ranker)",
-             "legacy_ranker": "Old ranker (3 features)", "new_ranker": "New ranker (11 features)",
+             "new_ranker": "New ranker (11 features)",
              "production_blend": "Production blend", "segment_aware": "Segment-aware policy",
              "oracle": "Oracle (true taste, not deployable)"}
     for group, label in [("first_order", "first-time buyers"), ("repeat_order", "repeat buyers")]:

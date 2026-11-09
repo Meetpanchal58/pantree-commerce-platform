@@ -125,33 +125,48 @@ if __name__ == "__main__":
 
 
 class SegmentAwarePolicyTests(unittest.TestCase):
-    def _captured_sources(self, context):
+    def test_first_time_buyer_list_is_ordered_by_popularity(self):
+        from recommendations.policy import final_scores
+
+        scores = final_scores(np.array([0.9, 0.1, 0.5]), np.array([1, 10, 5]), first_timer=True,
+                              ranker_scores=np.array([3.0, 1.0, 2.0]))
+        self.assertEqual(list(np.argsort(-scores)), [1, 2, 0])
+
+    def test_returning_buyer_gets_the_ranker_blend(self):
+        from recommendations.policy import final_scores
+
+        scores = final_scores(np.array([0.2, 0.4]), np.array([100, 0]), first_timer=False,
+                              ranker_scores=np.array([5.0, 1.0]))
+        np.testing.assert_allclose(scores, [0.5 * 0.2 + 0.5 * 1.0, 0.5 * 0.4 + 0.0])
+
+    def test_without_a_ranker_returning_buyers_keep_retrieval_order(self):
+        from recommendations.policy import final_scores
+
+        np.testing.assert_allclose(final_scores(np.array([0.3, 0.6]), np.array([9, 1]), False, None), [0.3, 0.6])
+
+    def test_builder_applies_quotas_then_fills_by_score(self):
         from unittest.mock import patch
 
-        from recommendations import serve
+        from recommendations import policy
 
-        captured = {}
-
-        def fake(customer_id, surface, product_id, ctx, config):
-            captured.update(config)
-            return []
-
-        empty = pd.DataFrame(columns=["customer_id", "product_id", "order_timestamp"])
+        lists = {name: [] for name in policy.SOURCES}
+        lists["collaborative"] = [{"product_id": f"a{i}", "score": 1 - i / 100} for i in range(30)]
+        lists["trending"] = [{"product_id": f"t{i}", "score": 0.5 - i / 100} for i in range(30)]
+        lists["content"] = [{"product_id": "a0", "score": 0.2}]
+        state = policy.CustomerState("c", bought=["t0"], viewed=[])
         with (
-            patch.object(serve, "_recommend_from_config", side_effect=fake),
-            patch.object(serve, "read_realized_transactions", return_value=empty),
+            patch.object(policy, "POOL_SIZE", 45),
+            patch.object(policy, "available", side_effect=lambda pids, as_of: [True] * len(pids)),
         ):
-            serve.recommend("cust-1", "homepage", {"intent": "personalized", **context})
-        return [name for name, _, _ in captured["candidate_sources"]], captured["fusion_weights"]
-
-    def test_first_time_buyer_sees_trending_first(self):
-        names, weights = self._captured_sources({})
-        self.assertIn("trending", names)
-        self.assertGreater(weights["trending"], weights["recent_activity"])
-
-    def test_returning_buyer_keeps_personal_sources_only(self):
-        names, _ = self._captured_sources({"purchased_product_ids": ["p1"]})
-        self.assertNotIn("trending", names)
+            pool, _ = policy.build_candidates(state, sources=None, lists=lists)
+        ids = [c["product_id"] for c in pool]
+        self.assertNotIn("t0", ids)  # already bought
+        self.assertEqual(ids[:20], [f"a{i}" for i in range(20)])  # collaborative quota
+        self.assertEqual(ids[20:40], [f"t{i}" for i in range(1, 21)])  # trending quota
+        self.assertEqual(ids[40:], [f"a{i}" for i in range(20, 25)])  # fill by best score
+        by_id = {c["product_id"]: c for c in pool}
+        self.assertEqual(by_id["a0"]["n_sources"], 2)
+        self.assertEqual(by_id["a0"]["source"], "collaborative")
 
 
 class OracleTests(unittest.TestCase):
@@ -213,3 +228,16 @@ class OracleTests(unittest.TestCase):
         self.assertAlmostEqual(half["value"], 0.5)
         self.assertLess(half["ci_low"], 0.5 + 1e-9)
         self.assertGreater(half["ci_high"], 0.5 - 1e-9)
+
+
+class DeadCodeRemovedTests(unittest.TestCase):
+    def test_legacy_ranker_and_unused_helpers_are_gone(self):
+        import inspect
+
+        from recommendations import evaluate, ranker
+
+        self.assertFalse(hasattr(evaluate.History, "is_positive"))
+        self.assertFalse(hasattr(ranker, "build_training_frame"))
+        self.assertFalse(hasattr(ranker, "LEGACY_FEATURES"))
+        self.assertNotIn("sample_limit", inspect.signature(evaluate.main).parameters)
+        self.assertNotIn("--sample-limit", inspect.getsource(evaluate))

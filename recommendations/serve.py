@@ -10,10 +10,12 @@ from typing import Any
 
 import pandas as pd
 
+from . import policy
 from .candidates import collaborative, content, fbt, fusion, popularity
 from .candidates.common import (
     customer_histories,
     customer_histories_ready,
+    purchased_products,
     event_counts_ready,
     gender_is_compatible,
     read_event_counts,
@@ -24,6 +26,8 @@ from .candidates.common import (
 from .ranker import customer_profile, model_uses_current_features, score_candidates
 
 logger = logging.getLogger("recommendations")
+PERSONALIZED_TOP_K = 30
+HISTORY_LIMIT = 200  # viewed products used for the profile (matches customer_histories)
 
 
 def _context_product_ids(context: dict[str, Any]) -> list[str]:
@@ -101,24 +105,6 @@ def _get_popular(limit: int = 100, **_: Any) -> list[dict]:
     return popularity.get_popular(limit=limit)
 
 
-def _get_personalized(
-    customer_id: str | None = None,
-    limit: int = 100,
-    context: dict[str, Any] | None = None,
-    **_: Any,
-) -> list[dict]:
-    recent_product_ids = (context or {}).get("recent_product_ids", [])
-    if not isinstance(recent_product_ids, list):
-        recent_product_ids = []
-    return (
-        popularity.get_personalized(
-            customer_id, limit=limit, recent_product_ids=recent_product_ids
-        )
-        if customer_id
-        else []
-    )
-
-
 def _get_deals(limit: int = 100, **_: Any) -> list[dict]:
     return popularity.get_deals(limit=limit)
 
@@ -131,15 +117,11 @@ SURFACE_CONFIG: dict[str, dict[str, Any]] = {
     "homepage": {
         "candidate_sources": [
             ("collaborative", _get_collaborative, 100),
-            ("personalized", _get_personalized, 100),
             ("content", _get_content, 100),
             ("popularity", _get_popular, 100),
         ],
         "fusion_weights": {
             "collaborative": 0.40,
-            "recent_activity": 0.75,
-            "deals_on_viewed": 0.75,
-            "personalized": 0.75,
             "content": 0.25,
             "popularity": 0.35,
             "trending": 0.35,
@@ -179,174 +161,6 @@ SURFACE_CONFIG: dict[str, dict[str, Any]] = {
         "top_k": 8,
         "exclude_purchased": True,
     },
-    "checkout": {
-        "candidate_sources": [
-            ("collaborative", _get_collaborative, 60),
-            ("popularity", _get_popular, 60),
-        ],
-        "fusion_weights": {
-            "collaborative": 0.50,
-            "popularity": 0.50,
-        },
-        "max_candidates": 200,
-        "top_k": 6,
-        "exclude_purchased": True,
-    },
-    "category": {
-        "candidate_sources": [
-            ("content", _get_content, 100),
-            ("popularity", _get_popular, 100),
-        ],
-        "fusion_weights": {
-            "content": 0.50,
-            "popularity": 0.50,
-        },
-        "max_candidates": 300,
-        "top_k": 12,
-        "exclude_purchased": True,
-    },
-    "search": {
-        "candidate_sources": [
-            ("content", _get_content, 100),
-            ("collaborative", _get_collaborative, 80),
-        ],
-        "fusion_weights": {
-            "content": 0.60,
-            "collaborative": 0.40,
-        },
-        "max_candidates": 300,
-        "top_k": 10,
-        "exclude_purchased": True,
-    },
-    "browse": {
-        "candidate_sources": [
-            ("popularity", _get_popular, 100),
-            ("content", _get_content, 100),
-        ],
-        "fusion_weights": {
-            "popularity": 0.50,
-            "content": 0.50,
-        },
-        "max_candidates": 300,
-        "top_k": 12,
-        "exclude_purchased": True,
-    },
-}
-
-# ---------------------------------------------------------------------------
-# Sub-surfaces — intent-driven slices for multi-section pages
-# ---------------------------------------------------------------------------
-
-SUB_SURFACES: dict[str, dict[str, Any]] = {
-    # ── Home page sections ──────────────────────────────────────────────────
-    "homepage-personalized": {
-        "label": "Just For You",
-        "candidate_sources": [
-            ("collaborative", _get_collaborative, 100),
-            ("personalized", _get_personalized, 100),
-        ],
-        "fusion_weights": {
-            "collaborative": 1.0,
-            "recent_activity": 1.0,
-            "deals_on_viewed": 1.0,
-        },
-        "max_candidates": 150,
-        "top_k": 12,
-        "exclude_purchased": True,
-        "requires_customer": True,
-    },
-    "homepage-trending": {
-        "label": "Trending Now",
-        "candidate_sources": [
-            ("popularity", _get_popular, 150),
-        ],
-        "fusion_weights": {"popularity": 1.0},
-        "max_candidates": 150,
-        "top_k": 12,
-        "exclude_purchased": False,
-        "requires_customer": False,
-    },
-    "homepage-deals": {
-        "label": "Today's Deals",
-        "candidate_sources": [
-            ("deals", _get_deals, 150),
-        ],
-        "fusion_weights": {"deals": 1.0},
-        "max_candidates": 150,
-        "top_k": 12,
-        "exclude_purchased": False,
-        "requires_customer": False,
-    },
-
-    # ── PDP (Product Detail Page) sections ──────────────────────────────────
-    "pdp-similar": {
-        "label": "Similar Products",
-        "candidate_sources": [
-            ("content", _get_content, 100),
-        ],
-        "fusion_weights": {"content": 1.0},
-        "max_candidates": 100,
-        "top_k": 100,
-        "exclude_purchased": True,
-        "requires_product": True,
-    },
-    "pdp-fbt": {
-        "label": "Frequently Bought Together",
-        "candidate_sources": [
-            ("fbt", _get_fbt, 50),
-        ],
-        "fusion_weights": {"fbt": 1.0},
-        "max_candidates": 50,
-        "top_k": 50,
-        "exclude_purchased": True,
-        "requires_product": True,
-    },
-    "pdp-also-viewed": {
-        "label": "Also Viewed",
-        "candidate_sources": [
-            ("collaborative", _get_collaborative, 100),
-            ("popularity", _get_popular, 50),
-        ],
-        "fusion_weights": {
-            "collaborative": 0.60,
-            "popularity": 0.40,
-        },
-        "max_candidates": 150,
-        "top_k": 10,
-        "exclude_purchased": True,
-        "requires_customer": True,
-    },
-    "pdp-recommendations": {
-        "label": "Recommended For You",
-        "candidate_sources": [
-            ("content", _get_content, 50),
-            ("collaborative", _get_collaborative, 50),
-        ],
-        "fusion_weights": {
-            "content": 0.50,
-            "collaborative": 0.50,
-        },
-        "max_candidates": 150,
-        "top_k": 8,
-        "exclude_purchased": True,
-        "requires_product": True,
-        "requires_customer": True,
-    },
-}
-
-# Map parent surfaces to their sub-surface keys
-SURFACE_SUB_SECTIONS: dict[str, list[str]] = {
-    "homepage": [
-        "homepage-personalized",
-        "homepage-trending",
-        "homepage-deals",
-    ],
-    "product": [
-        "pdp-fbt",
-        "pdp-similar",
-        "pdp-also-viewed",
-        "pdp-recommendations",
-    ],
 }
 
 # ---------------------------------------------------------------------------
@@ -359,14 +173,66 @@ def _catalog() -> pd.DataFrame:
     return read_products()
 
 
-def _has_purchase_history(customer_id: str | None, context: dict[str, Any]) -> bool:
-    """True if the customer bought anything (live orders or warehouse history)."""
-    if context.get("purchased_product_ids"):
-        return True
-    if not customer_id or read_realized_transactions.cache_info().currsize == 0:
-        return False
-    transactions = read_realized_transactions()
-    return bool((transactions["customer_id"] == customer_id).any())
+def _id_list(values) -> list[str]:
+    if not isinstance(values, (list, tuple)):
+        return []
+    return [str(value) for value in values if value]
+
+
+def customer_state(customer_id: str | None, context: dict[str, Any]) -> policy.CustomerState:
+    """Purchases and viewed products, newest first: live store rows, then warehouse."""
+    stored = (
+        customer_histories().get(customer_id, {})
+        if customer_id and customer_histories_ready()
+        else {}
+    )
+    bought = list(dict.fromkeys(_id_list(context.get("purchased_product_ids")) + stored.get("bought", [])))
+    viewed = list(dict.fromkeys(_id_list(context.get("recent_product_ids")) + stored.get("viewed", [])))
+    return policy.CustomerState(customer_id, bought, viewed[:HISTORY_LIMIT])
+
+
+def _personalized(customer_id: str | None, context: dict[str, Any]) -> list[dict[str, Any]]:
+    """The "Recommended for you" row: the shared policy that the evaluation scores."""
+    limit = int(context.get("limit", PERSONALIZED_TOP_K))
+    if limit < 1:
+        raise ValueError("Recommendation limit must be positive")
+    catalog = _catalog()
+    segment = "first_order"
+    if not popularity.activity_ready():
+        # Warm-up only: activity counts are still loading in the background.
+        logger.info("[homepage] activity warming; serving the catalog fallback")
+        pool = popularity.get_popular(limit=limit)
+        ranked = sorted(pool, key=lambda item: (-item["score"], item["product_id"]))
+    else:
+        state = customer_state(customer_id, context)
+        sources = policy.Sources(model_as_of=None, use_content=heavy_models_enabled())
+        exclude = _excluded_product_ids(context) | set(_context_product_ids(context))
+        pool, _ = policy.build_candidates(state, sources, as_of=None, exclude=exclude)
+        model = _load_ranker() if context.get("use_ranker", True) else None  # False: A/B control
+        ranked = policy.rank(state, pool, sources, as_of=None, model=model, products=catalog)
+        segment = "first_order" if state.first_timer else "repeat"
+    results = []
+    for item in ranked:
+        if item["product_id"] not in catalog.index:
+            continue
+        product = catalog.loc[item["product_id"]]
+        results.append({
+            **item,
+            "retrieval_score": float(item.get("retrieval_score", item["score"])),
+            "name": product["product_name"],
+            "image_url": product["image_url"],
+            "category": product["h3_category"],
+            "brand_name": product["brand_name"],
+            "current_price": product["current_price"],
+            "segment": segment,
+        })
+        if len(results) >= min(limit, PERSONALIZED_TOP_K):
+            break
+    logger.info(
+        "[homepage] personalized result_count=%d sources=%s",
+        len(results), sorted({item.get("source", "unknown") for item in results}),
+    )
+    return results
 
 
 def _exclude_purchased(
@@ -379,15 +245,10 @@ def _exclude_purchased(
     excluded = {str(product_id) for product_id in live_purchases if product_id}
     if customer_id is None:
         return excluded
-    if read_realized_transactions.cache_info().currsize == 0:
+    if not customer_histories_ready():
         logger.info("Warehouse purchases are warming; using live purchase history")
         return excluded
-    transactions = read_realized_transactions()
-    excluded.update(
-        transactions.loc[
-            transactions["customer_id"] == customer_id, "product_id"
-        ].astype(str)
-    )
+    excluded.update(purchased_products().get(customer_id, ()))
     return excluded
 
 
@@ -460,6 +321,7 @@ def warm_recommendation_caches() -> None:
     read_realized_transactions()
     read_event_counts()
     customer_histories()
+    purchased_products()
     popularity.warm_popularity()
     popularity.warm_activity_cache()
     popularity.get_popular(100)
@@ -694,28 +556,7 @@ def recommend(
     product_id = context.get("product_id")
     intent = context.get("intent")
     if surface == "homepage" and intent == "personalized":
-        config = {
-            **config,
-            "candidate_sources": [
-                ("collaborative", _get_collaborative, 100),
-                ("personalized", _get_personalized, 100),
-            ],
-            "fusion_weights": {
-                "collaborative": 1.0,
-                "recent_activity": 1.1,
-                "deals_on_viewed": 1.1,
-                "personalized": 1.1,
-            },
-        }
-        if not _has_purchase_history(customer_id, context):
-            # Segment-aware policy: in the offline evaluation, popularity ranked
-            # first-time buyers' purchases far better than personal signals, so
-            # customers without purchases see trending items first (personal
-            # items still fill the rest of the row).
-            config["candidate_sources"] = config["candidate_sources"] + [
-                ("trending", _get_popular, 100)
-            ]
-            config["fusion_weights"] = {**config["fusion_weights"], "trending": 1.5}
+        return _personalized(customer_id, context)
     elif surface == "homepage" and intent == "trending":
         config = {
             **config,
@@ -742,76 +583,3 @@ def recommend(
         elif intent is not None:
             raise ValueError(f"Unknown product recommendation intent: {intent!r}")
     return _recommend_from_config(customer_id, surface, product_id, context, config)
-
-
-def recommend_sections(
-    customer_id: str | None,
-    surface: str,
-    context: dict[str, Any] | None = None,
-) -> list[dict[str, Any]]:
-    """Return *all* sub-surface sections for a parent *surface*.
-
-    Each returned dict has the shape:
-    ``{"key": "...", "label": "...", "items": [...], "count": ...}``
-
-    Parameters
-    ----------
-    surface:
-        Parent surface (``"homepage"`` or ``"product"``).
-    customer_id:
-        Logged-in user identifier (optional).
-    context:
-        Extra metadata, including a product anchor or cart for product-page surfaces.
-
-    Returns
-    -------
-    List of section dicts — one per sub-surface that was successfully
-    populated.
-    """
-    context = dict(context or {})
-    product_id = context.get("product_id")
-    sub_keys = SURFACE_SUB_SECTIONS.get(surface, [])
-    sections: list[dict[str, Any]] = []
-    shown_product_ids = _excluded_product_ids(context)
-
-    for sub_key in sub_keys:
-        sub_cfg = SUB_SURFACES.get(sub_key)
-        if sub_cfg is None:
-            continue
-
-        # Skip if prerequisites not met
-        if sub_cfg.get("requires_customer") and customer_id is None:
-            continue
-        if sub_cfg.get("requires_product") and product_id is None:
-            continue
-
-        section_context = dict(context)
-        section_context["limit"] = sub_cfg.get("top_k", 10)
-        if surface == "product":
-            section_context["exclude_product_ids"] = list(shown_product_ids)
-            if sub_key == "pdp-similar":
-                section_context["intent"] = "similar"
-            elif sub_key == "pdp-fbt":
-                section_context["intent"] = "complementary"
-        items = _recommend_from_config(
-            customer_id, surface, product_id, section_context, sub_cfg
-        )
-        if not items:
-            continue
-        shown_product_ids.update(item["product_id"] for item in items)
-
-        sections.append({
-            "key": sub_key,
-            "label": sub_cfg["label"],
-            "items": items,
-            "count": len(items),
-        })
-
-        logger.info(
-            "[%s] %s items in section '%s'",
-            sub_key,
-            len(items),
-            sub_cfg["label"],
-        )
-
-    return sections

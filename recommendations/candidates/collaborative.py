@@ -1,5 +1,7 @@
+import json
 import logging
 from functools import lru_cache
+from pathlib import Path
 from threading import Lock
 
 import pandas as pd
@@ -8,13 +10,69 @@ from .common import DATA, read_realized_transactions
 
 
 logger = logging.getLogger(__name__)
-# Tuned with recommendations/tune_als.py (validation period, then one test check):
-# views count less and purchases more than the original 1/3/5, and 32 factors
-# beat 48. Held-out Recall@20 0.0669 -> 0.0699, NDCG@20 0.0435 -> 0.0453.
-EVENT_WEIGHTS = {"pdp_view": 0.5, "add_to_cart": 3.0, "purchase": 8.0}
-ALS_PARAMS = {"factors": 32, "regularization": 0.01, "iterations": 15}
+# Single source of truth for ALS settings: the parameters tune_als.py chose on the
+# validation period (recommendations/reports/als_tuning.json, "best_on_validation").
+# Serving and evaluation both resolve them through als_params().
+ALS_TUNING_PATH = Path(__file__).resolve().parents[1] / "reports" / "als_tuning.json"
+FALLBACK_ALS_PARAMS = {"factors": 32, "regularization": 0.01, "iterations": 15, "weights": (0.5, 3.0, 8.0)}
 _WARM_LOCK = Lock()
 _MODEL_READY = False
+
+
+@lru_cache(maxsize=1)
+def als_params() -> dict:
+    """ALS factors, regularisation, iterations and (view, cart, purchase) weights."""
+    try:
+        best = json.loads(ALS_TUNING_PATH.read_text())["best_on_validation"]
+        return {
+            "factors": int(best["factors"]),
+            "regularization": float(best["regularization"]),
+            "iterations": int(best["iterations"]),
+            "weights": tuple(float(w) for w in best["weights"]),
+        }
+    except (OSError, KeyError, ValueError, TypeError) as exc:
+        logger.warning("Using fallback ALS params; could not read %s (%s)", ALS_TUNING_PATH, exc)
+        return dict(FALLBACK_ALS_PARAMS)
+
+
+def build_interactions(events, orders, weights, as_of=None) -> pd.Series:
+    """(customer, product) -> implicit-feedback weight for ALS.
+
+    Views and cart adds come from the clickstream; purchases come only from order
+    lines (quantity x purchase weight, plus a small bonus for same-day browsing).
+    The clickstream "purchase" event is ignored so a purchase is not counted twice.
+    """
+    view_w, cart_w, purchase_w = weights
+    events = events.copy()
+    events["event_timestamp"] = pd.to_datetime(events["event_timestamp"], errors="coerce")
+    if as_of is not None:
+        events = events[events["event_timestamp"] < pd.Timestamp(as_of)]
+    browse_weights = {"pdp_view": view_w, "add_to_cart": cart_w}
+    events = events[events["event_type"].isin(browse_weights)].dropna(
+        subset=["customer_id", "product_id", "event_timestamp"]
+    )
+    events["weight"] = events["event_type"].map(browse_weights)
+    interactions = events.groupby(["customer_id", "product_id"])["weight"].sum()
+
+    orders = orders.copy()
+    if as_of is not None:
+        orders = orders[orders["order_timestamp"] < pd.Timestamp(as_of)]
+    events["event_day"] = events["event_timestamp"].dt.normalize()
+    orders["order_day"] = pd.to_datetime(orders["order_timestamp"]).dt.normalize()
+    event_days = events[["customer_id", "event_day"]].drop_duplicates()
+    # Softly associate order lines with same-customer, same-day browsing; no order_id FK.
+    same_day_orders = orders.merge(
+        event_days,
+        left_on=["customer_id", "order_day"],
+        right_on=["customer_id", "event_day"],
+        how="inner",
+    )
+    purchases = orders.groupby(["customer_id", "product_id"])["quantity"].sum() * purchase_w
+    same_day_bonus = (
+        same_day_orders.groupby(["customer_id", "product_id"])["quantity"].sum() * 0.5
+    )
+    purchases = purchases.add(same_day_bonus, fill_value=0)
+    return interactions.add(purchases, fill_value=0)
 
 
 @lru_cache(maxsize=8)
@@ -27,14 +85,15 @@ def _fit_model(
 ):
     """Fit ALS once per (cut-off, settings) and retain the sparse training matrix.
 
-    ``weights`` is (view, add_to_cart, purchase); defaults come from EVENT_WEIGHTS.
+    Interactions: product views and cart adds from the clickstream, plus purchases
+    from order lines (quantity-aware). Clickstream "purchase" events are NOT used,
+    so a purchase isn't counted twice. Unspecified settings come from als_params().
     """
-    factors = factors or ALS_PARAMS["factors"]
-    regularization = ALS_PARAMS["regularization"] if regularization is None else regularization
-    iterations = iterations or ALS_PARAMS["iterations"]
-    event_weights = (
-        dict(zip(("pdp_view", "add_to_cart", "purchase"), weights)) if weights else EVENT_WEIGHTS
-    )
+    defaults = als_params()
+    factors = factors or defaults["factors"]
+    regularization = defaults["regularization"] if regularization is None else regularization
+    iterations = iterations or defaults["iterations"]
+    view_w, cart_w, purchase_w = weights or defaults["weights"]
     try:
         import implicit
         from scipy.sparse import coo_matrix
@@ -46,34 +105,9 @@ def _fit_model(
         DATA / "clickstream.parquet",
         columns=["customer_id", "product_id", "event_type", "event_timestamp"],
     )
-    events["event_timestamp"] = pd.to_datetime(events["event_timestamp"], errors="coerce")
-    if as_of is not None:
-        events = events[events["event_timestamp"] < pd.Timestamp(as_of)]
-    events = events[events["event_type"].isin(event_weights)].dropna(
-        subset=["customer_id", "product_id", "event_timestamp"]
+    interactions = build_interactions(
+        events, read_realized_transactions(), (view_w, cart_w, purchase_w), as_of
     )
-    events["weight"] = events["event_type"].map(event_weights)
-    interactions = events.groupby(["customer_id", "product_id"])["weight"].sum()
-
-    orders = read_realized_transactions().copy()
-    if as_of is not None:
-        orders = orders[orders["order_timestamp"] < pd.Timestamp(as_of)]
-    events["event_day"] = pd.to_datetime(events["event_timestamp"]).dt.normalize()
-    orders["order_day"] = orders["order_timestamp"].dt.normalize()
-    event_days = events[["customer_id", "event_day"]].drop_duplicates()
-    # Softly associate order lines with same-customer, same-day browsing; no order_id FK.
-    same_day_orders = orders.merge(
-        event_days,
-        left_on=["customer_id", "order_day"],
-        right_on=["customer_id", "event_day"],
-        how="inner",
-    )
-    purchases = orders.groupby(["customer_id", "product_id"])["quantity"].sum() * event_weights["purchase"]
-    same_day_bonus = (
-        same_day_orders.groupby(["customer_id", "product_id"])["quantity"].sum() * 0.5
-    )
-    purchases = purchases.add(same_day_bonus, fill_value=0)
-    interactions = interactions.add(purchases, fill_value=0)
 
     customers = interactions.index.get_level_values("customer_id").unique()
     products = interactions.index.get_level_values("product_id").unique()

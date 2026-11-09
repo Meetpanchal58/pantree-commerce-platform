@@ -184,7 +184,7 @@ async function loadRecommendationFeed({ surface, intent, containerId, moreId, em
 		if (!response.ok) throw new Error("Recommendation request failed");
 		items = await response.json();
 		if (!Array.isArray(items)) throw new Error("Unexpected recommendation response");
-		if (intent === "personalized" && items.length && items.every(item => ["trending", "catalog_fallback"].includes(item.source))) {
+		if (intent === "personalized" && items.length && items[0].segment === "first_order") {
 			document.getElementById("personalized-eyebrow").textContent = "A fresh start";
 			document.getElementById("personalized-heading").textContent = "Popular while we learn your taste";
 		}

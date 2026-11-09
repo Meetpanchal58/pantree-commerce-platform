@@ -19,10 +19,6 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 MODEL_PATH = Path(__file__).with_name("ranker.txt")
 
-# Legacy three-feature ranker, kept as a comparison point in the evaluation.
-LEGACY_FEATURES = ["customer_event_count", "product_event_count", "surface_id"]
-SURFACE_IDS = {"homepage": 0, "product": 1, "cart": 2}
-
 FEATURES = [
     "retrieval_score",       # normalised score from the source that proposed it
     "source_id",             # which family of source proposed it
@@ -43,7 +39,7 @@ FEATURES = [
 SOURCE_FAMILIES = {
     "collaborative": 0,
     "content": 1, "similar_fallback": 1,
-    "fbt": 2, "session_pairing": 2, "curated_complement": 2, "category_fallback": 2,
+    "fbt": 2, "session_pairing": 2, "learned_complement": 2, "category_fallback": 2,
     "trending": 3, "popularity": 3, "deals": 3, "catalog_fallback": 3,
     "recent_activity": 4, "deals_on_viewed": 4, "personalized": 4,
 }
@@ -73,7 +69,13 @@ def candidate_features(
     product_event_counts: pd.Series | None,
     anchor_product_id: str | None = None,
 ) -> pd.DataFrame:
-    """Add ranker features to a candidate frame (one row per candidate)."""
+    """Add ranker features to a candidate frame (one row per candidate).
+
+    Cold-start defaults (customer with no earlier views or purchases, so an empty
+    profile and no anchor): log_customer_activity = log_customer_purchases = 0,
+    category_affinity = 0, log_price_ratio = 0 (i.e. price equal to the customer's
+    typical price), same_type_as_anchor = 0. Product-side features are unaffected.
+    """
     frame = frame.copy()
     ids = frame["product_id"]
     meta = products.reindex(ids)
@@ -114,88 +116,6 @@ def candidate_features(
         meta["h3_category"].to_numpy() == anchor_type
     ).astype(float) if anchor_type else 0.0
     return frame
-
-
-def build_training_frame(sample_limit: int = 400000, seed: int = 17) -> pd.DataFrame:
-    """Sampled interaction events with point-in-time counts and purchase labels.
-
-    Used for query sampling, customer cohorts and the legacy comparison ranker.
-    """
-    from .candidates.common import DATA, read_realized_transactions
-
-    events = pd.read_parquet(
-        DATA / "clickstream.parquet",
-        columns=[
-            "customer_id", "session_id", "product_id", "event_timestamp",
-            "event_type", "page_type",
-        ],
-    )
-    events = events[
-        events["event_type"].isin(["pdp_view", "add_to_cart", "wishlist_add"])
-    ].dropna(subset=["customer_id", "product_id", "event_timestamp"]).copy()
-    events["event_timestamp"] = pd.to_datetime(events["event_timestamp"], errors="coerce")
-    events = events.dropna(subset=["event_timestamp"]).sort_values("event_timestamp")
-
-    customer_times = events.groupby(["customer_id", "event_timestamp"]).size()
-    product_times = events.groupby(["product_id", "event_timestamp"]).size()
-    customer_prior = (customer_times.groupby(level=0).cumsum() - customer_times).rename(
-        "customer_event_count"
-    )
-    product_prior = (product_times.groupby(level=0).cumsum() - product_times).rename(
-        "product_event_count"
-    )
-    events = events.join(customer_prior, on=["customer_id", "event_timestamp"])
-    events = events.join(product_prior, on=["product_id", "event_timestamp"])
-    if sample_limit > 0:
-        session_sizes = events.groupby("session_id").size()
-        session_count = min(len(session_sizes), max(1, sample_limit // 4))
-        selected_sessions = session_sizes.sample(
-            n=session_count, random_state=seed
-        ).index
-        events = events[events["session_id"].isin(selected_sessions)]
-
-    transactions = read_realized_transactions()
-    transactions = transactions.sort_values("order_timestamp").drop_duplicates(
-        ["customer_id", "product_id", "order_timestamp"]
-    )
-    transactions["purchase_day"] = transactions["order_timestamp"].dt.normalize()
-    events["event_day"] = events["event_timestamp"].dt.normalize()
-    purchases = transactions[
-        ["customer_id", "product_id", "purchase_day", "order_timestamp"]
-    ].rename(columns={"order_timestamp": "purchase_timestamp"})
-    events["_example_id"] = range(len(events))
-    events = events.merge(
-        purchases,
-        left_on=["customer_id", "product_id", "event_day"],
-        right_on=["customer_id", "product_id", "purchase_day"],
-        how="left",
-    )
-    events["label"] = (
-        (events["purchase_timestamp"] > events["event_timestamp"])
-        & (
-            events["purchase_timestamp"]
-            <= events["event_timestamp"] + pd.Timedelta(days=7)
-        )
-    ).astype("int8")
-    events = events.groupby("_example_id", as_index=False, sort=False).agg(
-        {
-            "customer_id": "first",
-            "session_id": "first",
-            "product_id": "first",
-            "event_timestamp": "first",
-            "event_day": "first",
-            "event_type": "first",
-            "page_type": "first",
-            "customer_event_count": "first",
-            "product_event_count": "first",
-            "label": "max",
-        }
-    )
-
-    events["surface_id"] = events["page_type"].map(
-        {"home": 0, "pdp": 1, "cart": 2}
-    ).fillna(0)
-    return events.dropna(subset=["customer_id", "product_id"])
 
 
 def train_ranker(training_frame: pd.DataFrame, features: list[str] | None = None):

@@ -255,15 +255,15 @@ async function loadProductRecommendations() {
     if (sources.size === 1 && sources.has("session_pairing")) {
       heading.textContent = "Often viewed together";
       eyebrow.textContent = "Based on browsing activity";
-    } else if (sources.size === 1 && sources.has("curated_complement")) {
+    } else if (sources.size === 1 && sources.has("learned_complement")) {
       heading.textContent = "Pairs well with";
-      eyebrow.textContent = "Curated complementary picks";
+      eyebrow.textContent = "Product types shoppers buy together";
     } else if (sources.size === 1 && sources.has("category_fallback")) {
       heading.textContent = "More from this department";
       eyebrow.textContent = "Related products in the same department";
     } else if (sources.size > 1) {
       heading.textContent = "Related picks";
-      eyebrow.textContent = "A blend of purchase, browsing, and curated signals";
+      eyebrow.textContent = "A blend of purchase and browsing signals";
     }
   }
   if (fbtItems && initialSimilarItems) {

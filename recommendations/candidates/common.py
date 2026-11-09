@@ -2,12 +2,32 @@ from pathlib import Path
 import json
 from functools import lru_cache
 
+import numpy as np
 import pandas as pd
 
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA = ROOT / "data"
-EXCLUDED_STATUSES = {"RTO", "CANCELLED", "REFUNDED", "CIC", "CIR", "LOST", "UNDELIVERED"}
+# One definition of "a purchase" for every recommender, evaluation and webapp query:
+# the payment succeeded and the order line was not cancelled, returned to sender,
+# lost or undelivered. CIR lines (paid and delivered, later returned by the
+# customer) ARE purchases. Matches the warehouse's realized-revenue definition.
+NON_PURCHASE_STATUSES = ("RTO", "CANCELLED", "REFUNDED", "CIC", "LOST", "UNDELIVERED")
+PURCHASE_PAYMENT_STATUS = "SUCCESS"
+
+
+def purchase_mask(frame: pd.DataFrame) -> pd.Series:
+    """True for order lines that count as purchases (see NON_PURCHASE_STATUSES)."""
+    status = frame["order_status"].fillna("").astype(str).str.upper()
+    payment = frame["payment_status"].fillna("").astype(str).str.upper()
+    return ~status.isin(NON_PURCHASE_STATUSES) & payment.eq(PURCHASE_PAYMENT_STATUS)
+
+
+def purchase_sql(status_col: str = "order_status", payment_col: str = "payment_status") -> str:
+    """The same rule as a SQL condition, for the live SQLite store."""
+    statuses = ",".join(f"'{s}'" for s in NON_PURCHASE_STATUSES)
+    return (f"UPPER(COALESCE({status_col},'')) NOT IN ({statuses}) "
+            f"AND UPPER(COALESCE({payment_col},'')) = '{PURCHASE_PAYMENT_STATUS}'")
 UNIVERSAL_GENDERS = {"unisex", "all", "all genders", "unisex clothing"}
 
 
@@ -49,8 +69,7 @@ def read_realized_transactions() -> pd.DataFrame:
             "order_status", "payment_status", "quantity", "unit_selling_price",
         ],
     )
-    status = transactions["order_status"].fillna("").str.upper()
-    transactions = transactions.loc[~status.isin(EXCLUDED_STATUSES)].copy()
+    transactions = transactions.loc[purchase_mask(transactions)].copy()
     transactions["order_timestamp"] = pd.to_datetime(
         transactions["order_timestamp"], errors="coerce"
     )
@@ -143,5 +162,71 @@ def customer_histories(limit: int = 200) -> dict[str, dict]:
     }
 
 
+@lru_cache(maxsize=1)
+def purchased_products() -> dict[str, frozenset]:
+    """Customer -> products they bought, precomputed once at load (no per-request scans)."""
+    return {cid: frozenset(h["bought"]) for cid, h in customer_histories().items() if h["bought"]}
+
+
 def customer_histories_ready() -> bool:
     return customer_histories.cache_info().currsize > 0
+
+
+class AvailabilityIndex:
+    """Was a product sellable at a moment? In stock at the previous day's close,
+    launched, and not yet discontinued. ``as_of=None`` means now (latest stock
+    and the catalog's ``is_active`` flag)."""
+
+    def __init__(self):
+        stock = pd.read_parquet(
+            DATA / "inventory.parquet", columns=["inventory_date", "product_id", "closing_stock"]
+        )
+        stock["inventory_date"] = pd.to_datetime(stock["inventory_date"], errors="coerce").dt.normalize()
+        stock = stock.dropna(subset=["inventory_date"])
+        in_stock = (
+            stock.assign(ok=stock["closing_stock"].gt(0))
+            .pivot_table(index="inventory_date", columns="product_id", values="ok", aggfunc="max")
+            .sort_index()
+        )
+        self.days = in_stock.index.to_numpy()
+        self.in_stock = in_stock.fillna(False).to_numpy(dtype=bool)
+        self.column = {pid: i for i, pid in enumerate(in_stock.columns)}
+        catalog = pd.read_parquet(
+            DATA / "product_master.parquet", columns=["product_id", "launch_date", "discontinue_date"]
+        ).drop_duplicates("product_id").set_index("product_id")
+        self.launch = pd.to_datetime(catalog["launch_date"], errors="coerce").to_dict()
+        self.discontinue = pd.to_datetime(catalog["discontinue_date"], errors="coerce").to_dict()
+
+    def available(self, product_ids, as_of) -> list[bool]:
+        as_of = pd.Timestamp(as_of)
+        # Stock known at as_of: the close of the last full day before it.
+        row = int(np.searchsorted(self.days, np.datetime64(as_of.normalize()), side="left")) - 1
+        out = []
+        for pid in product_ids:
+            launch, stop = self.launch.get(pid), self.discontinue.get(pid)
+            if launch is None or pd.isna(launch) or launch > as_of:
+                out.append(False)
+            elif stop is not None and not pd.isna(stop) and stop <= as_of:
+                out.append(False)
+            else:
+                col = self.column.get(pid)
+                # Before the first inventory snapshot, launched products count as stocked.
+                out.append(True if row < 0 else bool(col is not None and self.in_stock[row, col]))
+        return out
+
+
+@lru_cache(maxsize=1)
+def availability_index() -> AvailabilityIndex:
+    return AvailabilityIndex()
+
+
+def available(product_ids, as_of=None) -> list[bool]:
+    """Sellable at ``as_of`` (point in time) or now (``None``)."""
+    if as_of is not None:
+        return availability_index().available(product_ids, as_of)
+    products, stock = read_products(), read_stock()
+    out = []
+    for pid in product_ids:
+        active = pid in products.index and not pd.isna(products.at[pid, "is_active"]) and bool(products.at[pid, "is_active"])
+        out.append(active and pid in stock.index and float(stock.loc[pid]) > 0)
+    return out

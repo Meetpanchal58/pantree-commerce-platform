@@ -22,7 +22,7 @@ README = ROOT / "README.md"
 START, END = "<!-- RESULTS:START -->", "<!-- RESULTS:END -->"
 NAMES = {
     "random": "Random order", "popularity": "Popularity", "retrieval": "Retrieval score (previous production)",
-    "legacy_ranker": "Old ranker (3 features)", "new_ranker": "New ranker (11 features)",
+    "new_ranker": "New ranker (11 features)",
     "production_blend": "Production blend (50/50)", "segment_aware": "**Segment-aware (served)**",
     "oracle": "Oracle (true taste, not deployable)",
 }
@@ -49,7 +49,8 @@ def build(report: dict) -> str:
         "- **Problem:** rank products for the home-page \"Recommended for you\" row, predicting the exact product "
         "bought among 10,000, using only data known one hour before the order.",
         "- **Method:** 5 retrieval sources (implicit ALS, trending, recent activity, FAISS content similarity, "
-        "co-purchase) → 11-feature LightGBM LambdaRank → segment-aware policy (popularity for first-time buyers).",
+        "co-purchase) → 11-feature LightGBM LambdaRank → segment-aware policy (popularity for first-time buyers). "
+        "The evaluated policy is the code the storefront serves (`recommendations/policy.py`).",
         f"- **Evaluation:** 3-period temporal split, {st['embargo_days']}-day embargo, {oc['orders_with_new_products']:,} "
         f"held-out orders (of {oc['test_orders']:,}; see order counts below), paired-bootstrap 95% CIs.",
         f"- **Headline:** served policy NDCG@10 {served:.4f} vs {rel['retrieval_ndcg10']:.4f} for retrieval order: "
@@ -108,12 +109,11 @@ def build_eval(report: dict) -> str:
         f"{ceiling['candidate_list_hit_rate']:.1%}; **retrieval ceiling** (top {ceiling['k']} of all eligible products "
         f"by true taste): {ceiling['hit_rate']:.1%}",
         "",
-        f"Order counts: {oc['test_orders']:,} paid orders in the test period. {oc['orders_dropped_no_history']:,} came from "
-        "customers with no earlier activity and are dropped by a known feature-building issue (pandas drops groups with a "
-        f"missing history anchor; left unchanged so results stay comparable). {oc['orders_only_rebuying_previous_products']:,} "
+        f"Order counts: {oc['test_orders']:,} paid orders in the test period. {oc['cold_start_orders']:,} came from "
+        "customers with no earlier activity (cold start); they stay in and are scored with documented default "
+        f"features. {oc['orders_only_rebuying_previous_products']:,} "
         f"only re-bought earlier products (excluded from candidates), leaving {oc['orders_with_new_products']:,} for the "
-        f"end-to-end tables. {oc['orders_with_purchase_in_list']:,} had a bought product in the list "
-        f"({oc['orders_with_purchase_in_list_dropped_no_history']:,} of them no-history orders); ranking-only tables "
+        f"end-to-end tables. {oc['orders_with_purchase_in_list']:,} had a bought product in the list; ranking-only tables "
         f"also need at least {report['settings']['min_pool']} candidates and one not-bought candidate "
         f"({oc['dropped_list_under_min_pool']:,} + {oc['dropped_list_all_purchased']:,} dropped), leaving "
         f"{oc['ranking_only_orders']:,}.",
@@ -123,17 +123,13 @@ def build_eval(report: dict) -> str:
         lines += ["", "Ranker features with the most gain: " + ", ".join(f"`{f}` ({v:.0%})" for f, v in top) + "."]
     if ALS_REPORT.exists():
         als = json.loads(ALS_REPORT.read_text())
-        best, test = als["best_on_validation"], als["test"]
-        from recommendations.candidates.collaborative import ALS_PARAMS, EVENT_WEIGHTS
-
-        lines += ["", f"ALS tuning (`python -m recommendations.tune_als`, chosen on the validation period, checked once "
-                  f"on the test period): best {best['factors']} factors, regularisation {best['regularization']}, "
-                  f"weights (view, cart, purchase) {tuple(best['weights'])}; held-out Recall@{als['k']} "
-                  f"{test['default']['recall@' + str(als['k'])]:.4f} (original 48 factors, 1/3/5) → "
-                  f"{test['best']['recall@' + str(als['k'])]:.4f}. Serving currently uses {ALS_PARAMS['factors']} factors, "
-                  f"regularisation {ALS_PARAMS['regularization']}, weights "
-                  f"{tuple(EVENT_WEIGHTS[k] for k in ('pdp_view', 'add_to_cart', 'purchase'))}. "
-                  "Full grid: [`als_tuning.md`](recommendations/reports/als_tuning.md)."]
+        best, test, k = als["best_on_validation"], als["test"], als["k"]
+        lines += ["", f"ALS tuning (`python -m recommendations.tune_als`, chosen on the validation period with a "
+                  f"{als.get('embargo_days', 0)}-day embargo, checked once on the test period): {best['factors']} factors, "
+                  f"regularisation {best['regularization']}, weights (view, cart, purchase) {tuple(best['weights'])}; "
+                  f"held-out Recall@{k} {test['serving_before_run']['recall@' + str(k)]:.4f} with the previous serving "
+                  f"settings → {test['best']['recall@' + str(k)]:.4f}. Serving and evaluation read these settings from "
+                  "`als_tuning.json`. Full grid: [`als_tuning.md`](recommendations/reports/als_tuning.md)."]
     return "\n".join(lines)
 
 

@@ -1,43 +1,161 @@
-import pandas as pd
+"""Popularity-based sources: trending products and "because you viewed" items.
+
+All counts come from one activity index (product views, cart adds and wishlist
+adds) and are point in time: ``as_of`` counts only events strictly before that
+moment; ``None`` means everything loaded (serving). The same counts feed the
+ranker's product-popularity feature.
+"""
 from functools import lru_cache
-import math
+
+import numpy as np
+import pandas as pd
 
 from .common import (
-    DATA,
     gender_is_compatible,
     read_clickstream_activity,
     read_products,
-    read_realized_transactions,
     read_stock,
 )
 
+TRENDING_WINDOW = pd.Timedelta(days=30)
+TRENDING_LIMIT = 100
+RECENT_MAX_SEEDS = 5
+RECENT_PER_SEED = 20
+
+
+class ActivityIndex:
+    """Event counts per product before any moment, in O(products) per query."""
+
+    def __init__(self, events: pd.DataFrame):
+        events = events.sort_values("event_timestamp", kind="mergesort")
+        codes, self.product_ids = pd.factorize(events["product_id"], sort=True)
+        self.times = events["event_timestamp"].to_numpy(dtype="datetime64[ns]")
+        self.codes = codes.astype(np.int32)
+        n = len(self.product_ids)
+        if len(self.times):
+            self.start = self.times[0].astype("datetime64[D]")
+            days = (self.times.astype("datetime64[D]") - self.start).astype(int)
+            per_day = np.zeros((days.max() + 1, n), dtype=np.int32)
+            np.add.at(per_day, (days, self.codes), 1)
+            # cumulative[d] = events before the start of day d
+            self.cumulative = np.vstack(
+                [np.zeros((1, n), dtype=np.int32), per_day.cumsum(axis=0, dtype=np.int32)]
+            )
+        else:
+            self.start = None
+            self.cumulative = np.zeros((1, n), dtype=np.int32)
+        self.total = self.cumulative[-1]
+        self.last_event = pd.Timestamp(self.times[-1]) if len(self.times) else None
+
+    def counts_before(self, as_of) -> np.ndarray:
+        if as_of is None or self.start is None:
+            return self.total
+        moment = np.datetime64(pd.Timestamp(as_of), "ns")
+        day_start = moment.astype("datetime64[D]")
+        day = int((day_start - self.start).astype(int))
+        if day < 0:
+            return np.zeros_like(self.total)
+        if day >= len(self.cumulative) - 1:
+            return self.total
+        lo = np.searchsorted(self.times, day_start.astype("datetime64[ns]"), side="left")
+        hi = np.searchsorted(self.times, moment, side="left")
+        base = self.cumulative[day]
+        if hi <= lo:
+            return base
+        return base + np.bincount(self.codes[lo:hi], minlength=len(self.product_ids)).astype(np.int32)
+
 
 @lru_cache(maxsize=1)
-def _popular_counts() -> pd.Series:
-    """Aggregate recent order and product-view popularity from the warehouse."""
-    transactions = read_realized_transactions()
-    if not transactions.empty:
-        cutoff = transactions["order_timestamp"].max() - pd.Timedelta(days=30)
-        recent = transactions[transactions["order_timestamp"] >= cutoff]
-        counts = recent.groupby("product_id")["quantity"].sum()
-        if counts.empty:
-            counts = transactions.groupby("product_id")["quantity"].sum()
-    else:
-        counts = pd.Series(dtype="float64")
+def activity_index() -> ActivityIndex:
+    return ActivityIndex(read_clickstream_activity())
 
-    events = _activity_events()
-    if not events.empty:
-        cutoff = events["event_timestamp"].max() - pd.Timedelta(days=30)
-        recent_views = events[events["event_timestamp"] >= cutoff]
-        views = recent_views["product_id"].value_counts()
-        counts = counts.add(views, fill_value=0)
 
-    return counts.sort_index().sort_values(ascending=False, kind="mergesort")
+def activity_ready() -> bool:
+    return activity_index.cache_info().currsize > 0
+
+
+@lru_cache(maxsize=64)
+def activity_counts(as_of=None) -> pd.Series:
+    """Events per product before ``as_of`` (all events when ``None``)."""
+    index = activity_index()
+    return pd.Series(index.counts_before(as_of), index=index.product_ids)
 
 
 def warm_popularity() -> None:
-    """Aggregate warehouse popularity before it is needed by a request."""
-    _popular_counts()
+    activity_counts(None)
+
+
+def warm_activity_cache() -> None:
+    activity_index()
+
+
+@lru_cache(maxsize=512)
+def trending(as_of=None, limit: int = TRENDING_LIMIT) -> tuple:
+    """Most-interacted products in the 30 days before ``as_of`` (before the
+    latest event when ``None``), scored relative to the top product."""
+    index = activity_index()
+    if as_of is None:
+        if index.last_event is None:
+            return ()
+        end = index.last_event + pd.Timedelta(microseconds=1)
+    else:
+        end = pd.Timestamp(as_of)
+    recent = index.counts_before(end) - index.counts_before(end - TRENDING_WINDOW)
+    counts = pd.Series(recent, index=index.product_ids)
+    counts = counts[counts > 0].sort_index().sort_values(ascending=False, kind="mergesort").head(limit)
+    peak = float(counts.max()) if len(counts) else 0.0
+    return tuple(
+        {"product_id": pid, "score": float(n / peak) if peak else 0.0, "source": "trending",
+         "reason": "Popular with shoppers recently"}
+        for pid, n in counts.items()
+    )
+
+
+@lru_cache(maxsize=1)
+def _products_by_type() -> dict:
+    products = read_products()
+    return {cat: group.index.to_numpy() for cat, group in products.groupby("h3_category")}
+
+
+@lru_cache(maxsize=1024)
+def _same_type_pool(category, gender) -> np.ndarray:
+    """Products of ``category`` an audience of ``gender`` can be shown, sorted by id."""
+    products = read_products()
+    ids = _products_by_type().get(category, np.array([], dtype=object))
+    genders = products.loc[ids, "gender"].tolist() if len(ids) else []
+    keep = [pid for pid, g in zip(ids, genders) if gender_is_compatible(gender, g)]
+    return np.array(sorted(keep), dtype=object)
+
+
+def recent_activity(seeds: list[str], as_of=None) -> list[dict]:
+    """Items of the same type and audience as the customer's recent products,
+    most popular first (popularity as of ``as_of``)."""
+    products = read_products()
+    counts = activity_counts(as_of)
+    peak = float(counts.max()) if len(counts) else 0.0
+    peak = peak or 1.0
+    out: dict[str, dict] = {}
+    for seed in list(dict.fromkeys(seeds))[:RECENT_MAX_SEEDS]:
+        if seed not in products.index:
+            continue
+        category, gender = products.at[seed, "h3_category"], products.at[seed, "gender"]
+        if not isinstance(category, str):
+            continue
+        pool = _same_type_pool(category, gender if isinstance(gender, str) else None)
+        pool = pool[pool != seed]
+        if not len(pool):
+            continue
+        popularity = counts.reindex(pool).fillna(0).to_numpy(dtype=float)
+        # Most popular first; ties by product id (pool is already sorted by id).
+        order = np.argsort(-popularity, kind="stable")[:RECENT_PER_SEED]
+        name = products.at[seed, "product_name"] if "product_name" in products.columns else seed
+        for i in order:
+            p = pool[i]
+            score = 0.80 + 0.10 * float(popularity[i]) / peak
+            if score > out.get(p, {"score": -1.0})["score"]:
+                out[p] = {"product_id": p, "score": score, "source": "recent_activity",
+                          "reason": f"Because you looked at {name}"}
+    return sorted(out.values(), key=lambda c: (-c["score"], c["product_id"]))
 
 
 def _catalog_fallback(limit: int) -> list[dict]:
@@ -67,22 +185,11 @@ def _catalog_fallback(limit: int) -> list[dict]:
 
 
 def get_popular(limit: int = 100) -> list[dict]:
-    """Return recent interaction popularity or a fast catalog-quality fallback."""
-    if _popular_counts.cache_info().currsize == 0:
+    """Trending products now; a catalog-quality list while activity is loading."""
+    if not activity_ready():
         return _catalog_fallback(limit)
-    counts = _popular_counts().head(limit)
-    if counts.empty:
-        return _catalog_fallback(limit)
-    maximum = float(counts.max()) if not counts.empty else 0.0
-    return [
-        {
-            "product_id": product_id,
-            "score": 0.7 * float(count / maximum) if maximum else 0.0,
-            "source": "trending",
-            "reason": "Popular with shoppers recently",
-        }
-        for product_id, count in counts.items()
-    ]
+    items = [dict(item) for item in trending(None, max(limit, TRENDING_LIMIT))][:limit]
+    return items or _catalog_fallback(limit)
 
 
 def get_deals(limit: int = 100) -> list[dict]:
@@ -106,154 +213,6 @@ def get_deals(limit: int = 100) -> list[dict]:
     ]
 
 
-@lru_cache(maxsize=1)
-def _activity_events() -> pd.DataFrame:
-    return read_clickstream_activity()
-
-
-@lru_cache(maxsize=1)
-def _recent_product_scores() -> pd.Series:
-    events = _activity_events()
-    if events.empty:
-        return pd.Series(dtype="float64")
-    cutoff = events["event_timestamp"].max() - pd.Timedelta(days=30)
-    return (
-        events.loc[events["event_timestamp"] >= cutoff]
-        .groupby("product_id")["weight"]
-        .sum()
-    )
-
-
-def warm_activity_cache() -> None:
-    """Load warehouse activity signals outside the request path."""
-    _activity_events()
-    _recent_product_scores()
-
-
-def get_personalized(
-    customer_id: str,
-    limit: int = 100,
-    recent_product_ids: list[str] | None = None,
-) -> list[dict]:
-    """Recommend items related to this customer's recent views and purchases."""
-    online_seeds = list(dict.fromkeys(recent_product_ids or []))
-    if online_seeds:
-        seeds = pd.DataFrame({"product_id": online_seeds[:5]})
-        seed_reason = "viewed"
-    elif _activity_events.cache_info().currsize:
-        events = _activity_events()
-        viewed = events[events["customer_id"] == customer_id].sort_values(
-            "event_timestamp", ascending=False
-        ).drop_duplicates("product_id").head(5)
-        seeds = viewed
-        seed_reason = "viewed"
-        if seeds.empty:
-            orders = read_realized_transactions()
-            purchases = orders[orders["customer_id"] == customer_id].sort_values(
-                "order_timestamp", ascending=False
-            ).drop_duplicates("product_id").head(5)
-            if purchases.empty:
-                return []
-            seeds = purchases[["product_id"]].copy()
-            seed_reason = "bought"
-    else:
-        return []
-    if seeds.empty:
-        if not online_seeds:
-            return []
-
-    products = read_products()
-    global_scores = (
-        _recent_product_scores()
-        if _recent_product_scores.cache_info().currsize
-        else pd.Series(dtype="float64")
-    )
-    recent_candidates: dict[str, dict] = {}
-    deal_candidates: dict[str, dict] = {}
-    for seed in seeds["product_id"]:
-        if seed not in products.index:
-            continue
-        category = products.at[seed, "h3_category"]
-        if pd.isna(category):
-            continue
-        seed_gender = products.at[seed, "gender"]
-        seed_name = products.at[seed, "product_name"]
-        category_products = products[products["h3_category"] == category].copy()
-        category_products = category_products[category_products.index != seed]
-        category_products = category_products[
-            category_products["gender"].map(
-                lambda gender: gender_is_compatible(seed_gender, gender)
-            )
-        ]
-        category_products = category_products.reset_index(drop=True)
-        category_products["_activity"] = global_scores.reindex(
-            category_products["product_id"]
-        ).to_numpy()
-        activity_max = float(category_products["_activity"].max())
-        if activity_max:
-            category_products["_activity_score"] = (
-                category_products["_activity"] / activity_max
-            )
-        else:
-            category_products["_rating_signal"] = (
-                category_products["avg_rating"].fillna(0).clip(0, 5) / 5
-            )
-            category_products["_review_signal"] = category_products[
-                "review_count"
-            ].fillna(0).map(math.log1p)
-            review_max = float(category_products["_review_signal"].max())
-            if review_max:
-                category_products["_review_signal"] /= review_max
-            category_products["_activity_score"] = (
-                0.7 * category_products["_rating_signal"]
-                + 0.3 * category_products["_review_signal"]
-            )
-        for _, row in category_products.sort_values(
-            ["_activity_score", "product_id"], ascending=[False, True]
-        ).head(limit).iterrows():
-            product_id = row["product_id"]
-            score = 0.80 + 0.10 * float(row["_activity_score"])
-            candidate = {
-                "product_id": product_id,
-                "score": score,
-                "source": "recent_activity",
-                "reason": f"Because you {seed_reason} {seed_name}",
-            }
-            if (
-                product_id not in recent_candidates
-                or score > recent_candidates[product_id]["score"]
-            ):
-                recent_candidates[product_id] = candidate
-
-        deal_rows = category_products[
-            category_products["mrp"].gt(0)
-            & category_products["current_price"].lt(category_products["mrp"])
-        ].copy()
-        if not deal_rows.empty:
-            deal_rows["_discount"] = (
-                (deal_rows["mrp"] - deal_rows["current_price"]) / deal_rows["mrp"]
-            )
-            for _, row in deal_rows.sort_values(
-                ["_discount", "_activity_score"], ascending=False
-            ).head(1).iterrows():
-                product_id = row["product_id"]
-                score = 0.90 + 0.08 * float(row["_discount"])
-                candidate = {
-                    "product_id": product_id,
-                    "score": score,
-                    "source": "deals_on_viewed",
-                    "reason": f"On offer because you {seed_reason} {seed_name}",
-                }
-                if (
-                    product_id not in deal_candidates
-                    or score > deal_candidates[product_id]["score"]
-                ):
-                    deal_candidates[product_id] = candidate
-
-    for product_id in deal_candidates:
-        recent_candidates.pop(product_id, None)
-    candidates = {**recent_candidates, **deal_candidates}
-    return sorted(
-        candidates.values(),
-        key=lambda item: (-item["score"], item["product_id"]),
-    )[:limit]
+def clear_caches() -> None:
+    for cached in (activity_index, activity_counts, trending, _products_by_type, _same_type_pool):
+        cached.cache_clear()
