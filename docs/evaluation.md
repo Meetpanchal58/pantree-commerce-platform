@@ -87,10 +87,12 @@ order line already records the same purchase.
 ## What is evaluated is what is served
 
 `recommendations/policy.py` holds the personalised "Recommended for you" policy:
-the five candidate sources, the candidate-list rules (dedup, availability, 20 per
-source, filled to 100 by score) and the segment policy (popularity order for
-customers with no purchases; a 50/50 blend of retrieval score and min-max-scaled
-ranker score for everyone else). `serve.recommend(..., intent="personalized")` and
+the five candidate sources, the candidate-list rules (dedup, availability, a
+quota per source, then filled to the pool size by score) and the ordering (a
+blend of the retrieval score and the min-max-scaled ranker score, with optional
+popularity order for customers with no purchases). The quotas, pool size, blend
+weight, first-timer rule and trending window are read from
+`recommendations/reports/policy_config.json`; see "Policy settings" below. `serve.recommend(..., intent="personalized")` and
 `evaluate.py` both call it, and `tests/test_policy_parity.py` checks that they
 return identical lists and scores for the same customer and moment.
 
@@ -118,3 +120,35 @@ to the evaluation:
   the five sources, so the list is never empty once activity has loaded. While
   activity is still loading at start-up, the row shows the catalog fallback
   (highly rated products); this is a warm-up state, not part of the policy.
+
+## Policy settings and the source ablation
+
+`python -m recommendations.tune_policy` chooses the per-source quotas, pool size,
+ranker blend weight, first-timer rule and trending window on a validation slice of
+period B (the ranker is fitted on the earlier part of B); the test period is not
+used. `recommendations/reports/policy_tuning.md` lists every setting tried.
+
+The ablation below is reported once, on the test period, and is **not** used to
+change the policy: a source whose removal looks helpful on test would have to be
+re-checked on the validation period first.
+
+<!-- ABLATION:START -->
+*Generated from `recommendations/reports/evaluation_report.json` by `python -m recommendations.readme_summary`.*
+
+Policy settings (chosen on the validation period by `python -m recommendations.tune_policy`): pool of 150, quotas collaborative 80, content 17, fbt 17, trending 17, recent_activity 17, ranker weight 0.75 in the blend with the retrieval score, first-time buyers get the same ranker blend, trending window 30 days.
+
+### Leave-one-source-out ablation (test period)
+
+Each row rebuilds the candidate lists without one source, retrains the ranker without it on period B and scores the served policy on the same test orders. The interval is the paired-bootstrap 95% CI of the change in NDCG@10 versus the full system.
+
+| Without | Pool recall | Served NDCG@10 | Change vs full (95% CI) |
+|---|---|---|---|
+| (nothing: full system) | 0.1667 | 0.0386 | – |
+| collaborative | 0.1153 | 0.0294 | -0.0092 (-0.0119 to -0.0066) |
+| content | 0.1609 | 0.0384 | -0.0001 (-0.0015 to +0.0012) |
+| fbt | 0.1655 | 0.0376 | -0.0010 (-0.0023 to +0.0003) |
+| trending | 0.1609 | 0.0340 | -0.0045 (-0.0062 to -0.0030) |
+| recent_activity | 0.1596 | 0.0400 | +0.0014 (+0.0002 to +0.0026) |
+
+**Recall acceptance check (passed):** combined candidate list recall 0.1667 vs 0.1178 for the best single source (collaborative, its own top list of the same size).
+<!-- ABLATION:END -->

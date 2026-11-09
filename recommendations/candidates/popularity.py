@@ -17,7 +17,7 @@ from .common import (
     read_stock,
 )
 
-TRENDING_WINDOW = pd.Timedelta(days=30)
+TRENDING_WINDOW_DAYS = 30
 TRENDING_LIMIT = 100
 RECENT_MAX_SEEDS = 5
 RECENT_PER_SEED = 20
@@ -90,8 +90,8 @@ def warm_activity_cache() -> None:
 
 
 @lru_cache(maxsize=512)
-def trending(as_of=None, limit: int = TRENDING_LIMIT) -> tuple:
-    """Most-interacted products in the 30 days before ``as_of`` (before the
+def trending(as_of=None, limit: int = TRENDING_LIMIT, window_days: int = TRENDING_WINDOW_DAYS) -> tuple:
+    """Most-interacted products in the ``window_days`` before ``as_of`` (before the
     latest event when ``None``), scored relative to the top product."""
     index = activity_index()
     if as_of is None:
@@ -100,7 +100,7 @@ def trending(as_of=None, limit: int = TRENDING_LIMIT) -> tuple:
         end = index.last_event + pd.Timedelta(microseconds=1)
     else:
         end = pd.Timestamp(as_of)
-    recent = index.counts_before(end) - index.counts_before(end - TRENDING_WINDOW)
+    recent = index.counts_before(end) - index.counts_before(end - pd.Timedelta(days=window_days))
     counts = pd.Series(recent, index=index.product_ids)
     counts = counts[counts > 0].sort_index().sort_values(ascending=False, kind="mergesort").head(limit)
     peak = float(counts.max()) if len(counts) else 0.0
@@ -184,11 +184,11 @@ def _catalog_fallback(limit: int) -> list[dict]:
     ]
 
 
-def get_popular(limit: int = 100) -> list[dict]:
+def get_popular(limit: int = 100, window_days: int = TRENDING_WINDOW_DAYS) -> list[dict]:
     """Trending products now; a catalog-quality list while activity is loading."""
     if not activity_ready():
         return _catalog_fallback(limit)
-    items = [dict(item) for item in trending(None, max(limit, TRENDING_LIMIT))][:limit]
+    items = [dict(item) for item in trending(None, max(limit, TRENDING_LIMIT), window_days)][:limit]
     return items or _catalog_fallback(limit)
 
 

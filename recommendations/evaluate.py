@@ -43,13 +43,16 @@ from recommendations.candidates.common import (  # noqa: E402
     read_realized_transactions,
 )
 from recommendations.policy import (  # noqa: E402  (the served policy)
-    PER_SOURCE as POOL_PER_SOURCE,
-    POOL_SIZE,
+    DEFAULT_CONFIG,
+    SOURCES,
     CustomerState,
+    PolicyConfig,
     Sources,
     blend,
     build_candidates,
     final_scores,
+    load_config,
+    source_lists,
 )
 from recommendations.oracle import (  # noqa: E402  (evaluation-only ground truth)
     gap_closed_bootstrap,
@@ -175,22 +178,48 @@ def customer_state(history: History, cid, ts) -> CustomerState:
     return CustomerState(cid, history.bought_list(cid, ts), history.viewed_before(cid, ts))
 
 
-def build_pools(queries, sources: Sources, history: History) -> tuple[pd.DataFrame, dict]:
-    """Candidate list per order (the served policy's builder) + per-source hit statistics.
+def query_lists(queries, sources: Sources, history: History) -> list[tuple]:
+    """(query, customer state, raw source lists) per order; reusable across settings."""
+    out = []
+    for q in queries.itertuples(index=False):
+        state = customer_state(history, q.customer_id, q.query_time)
+        out.append((q, state, source_lists(state, sources, q.query_time)))
+    return out
+
+
+def build_pools(
+    queries,
+    sources: Sources,
+    history: History,
+    config: PolicyConfig = DEFAULT_CONFIG,
+    cached: list[tuple] | None = None,
+    drop: tuple = (),
+) -> tuple[pd.DataFrame, dict]:
+    """Candidate list per order (the served policy's builder) + retrieval statistics.
 
     ``queries`` has one row per order: customer_id, query_time, purchased (set).
+    ``cached`` reuses ``query_lists`` output; ``drop`` removes sources (ablation).
     """
+    cached = query_lists(queries, sources, history) if cached is None else cached
     rows = []
     source_hits = Counter()
     pool_hits = 0
-    for q in queries.itertuples(index=False):
+    pool_recall, single_recall = [], {name: [] for name in SOURCES if name not in drop}
+    for q, state, lists in cached:
         cid, ts, purchased = q.customer_id, q.query_time, q.purchased
-        state = customer_state(history, cid, ts)
-        pool, lists = build_candidates(state, sources, as_of=ts)
-        for name, items in lists.items():
+        lists = {name: items for name, items in lists.items() if name not in drop}
+        pool, filtered = build_candidates(state, sources, as_of=ts, lists=lists, config=config)
+        for name, items in filtered.items():
             if any(c["product_id"] in purchased for c in items):
                 source_hits[name] += 1
         excluded = set(state.bought)
+        wanted = purchased - excluded
+        if wanted:
+            denominator = min(len(wanted), config.pool_size)
+            pool_recall.append(len(wanted & {c["product_id"] for c in pool}) / denominator)
+            for name in single_recall:
+                top = {c["product_id"] for c in filtered.get(name, [])[: config.pool_size]}
+                single_recall[name].append(len(wanted & top) / denominator)
         hit = False
         for c in pool:
             label = int(c["product_id"] in purchased)
@@ -200,16 +229,48 @@ def build_pools(queries, sources: Sources, history: History) -> tuple[pd.DataFra
                 "event_timestamp": ts, "product_id": c["product_id"], "source": c["source"],
                 "retrieval_score": float(c["retrieval_score"]), "score": float(c["retrieval_score"]),
                 "n_sources": c["n_sources"], "label": label,
-                "n_purchased": len(purchased - excluded),
+                "n_purchased": len(wanted),
                 "first_timer": state.first_timer,
             })
         pool_hits += int(hit)
     stats = {
-        "queries": int(len(queries)),
+        "queries": int(len(cached)),
         "pool_contains_purchase": int(pool_hits),
         "source_hits": {k: int(v) for k, v in source_hits.items()},
+        "pool_recall": float(np.mean(pool_recall)) if pool_recall else 0.0,
+        "single_source_recall": {k: float(np.mean(v)) if v else 0.0 for k, v in single_recall.items()},
     }
     return pd.DataFrame(rows), stats
+
+
+def policy_scores(frame: pd.DataFrame, model, config: PolicyConfig = DEFAULT_CONFIG) -> pd.DataFrame:
+    """Adds ``new_ranker``, ``production_blend`` (ranker blend for everyone) and
+    ``segment_aware`` (the served policy, policy.final_scores) per candidate list."""
+    frame = frame.copy()
+    raw = None
+    if model is not None:
+        raw = model.predict(np.ascontiguousarray(frame[FEATURES].to_numpy(dtype=np.float32)))
+        frame["new_ranker"] = raw
+    retrieval = frame["retrieval_score"].to_numpy()
+    pop = frame["product_event_count"].to_numpy(dtype=float)
+    first = frame["first_timer"].to_numpy()
+    blended = np.zeros(len(frame))
+    served = np.zeros(len(frame))
+    for _, idx in frame.groupby("session_id", sort=False).indices.items():
+        if raw is not None:
+            blended[idx] = blend(retrieval[idx], raw[idx], config.ranker_blend)
+        served[idx] = final_scores(
+            retrieval[idx], pop[idx], bool(first[idx][0]), None if raw is None else raw[idx], config
+        )
+    if raw is not None:
+        frame["production_blend"] = blended
+    frame["segment_aware"] = served
+    return frame
+
+
+def served_ndcg(frame: pd.DataFrame, k: int = 10) -> pd.Series:
+    """End-to-end NDCG@k of the served policy, per order (frame from policy_scores)."""
+    return per_session_scores(frame[frame["n_purchased"] > 0], "segment_aware", k, True).set_index("session_id")["ndcg"]
 
 
 def order_queries(transactions, start, end) -> pd.DataFrame:
@@ -249,7 +310,8 @@ def rankable(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 # --------------------------------------------------------------------------- main
-def main(use_content: bool = True) -> dict:
+def main(use_content: bool = True, ablation: bool = True) -> dict:
+    config = load_config()  # chosen on the validation period by tune_policy.py
     products = read_products()
     transactions = read_realized_transactions()
     activity = load_activity()
@@ -263,50 +325,62 @@ def main(use_content: bool = True) -> dict:
     queries_c = order_queries(transactions, t_test, t_end)
     print(f"Periods: ranker orders {t_rank:%Y-%m-%d}..{t_test - EMBARGO:%Y-%m-%d} "
           f"({len(queries_b):,}), test orders {t_test:%Y-%m-%d}..{t_end:%Y-%m-%d} ({len(queries_c):,})")
+    print("Policy settings:", config.to_json())
 
     if use_content:
         from recommendations.candidates.content import warm_index
 
         warm_index()
-    sources_b = Sources(model_as_of=t_rank - EMBARGO, use_content=use_content)
-    pools_b, _ = build_pools(queries_b, sources_b, history)
+    window = config.trending_window_days
+    sources_b = Sources(model_as_of=t_rank - EMBARGO, use_content=use_content, trending_window_days=window)
+    cached_b = query_lists(queries_b, sources_b, history)
+    pools_b, _ = build_pools(queries_b, sources_b, history, config, cached_b)
     train_b = add_features(pools_b, sources_b, history, products)
 
-    sources_c = Sources(model_as_of=t_test - EMBARGO, use_content=use_content)
-    pools_c, retrieval_stats = build_pools(queries_c, sources_c, history)
+    sources_c = Sources(model_as_of=t_test - EMBARGO, use_content=use_content, trending_window_days=window)
+    cached_c = query_lists(queries_c, sources_c, history)
+    pools_c, retrieval_stats = build_pools(queries_c, sources_c, history, config, cached_c)
     test_c = add_features(pools_c, sources_c, history, products)
 
     model = train_ranker(train_b, FEATURES)
 
-    test_all = test_c[test_c["n_purchased"] > 0].copy()
+    test_all = policy_scores(test_c[test_c["n_purchased"] > 0], model, config)
     rng = np.random.default_rng(11)
     test_all["random"] = rng.random(len(test_all))
     test_all["popularity"] = test_all["product_event_count"]
     test_all["retrieval"] = test_all["retrieval_score"]
     orderings = ["random", "popularity", "retrieval"]
     if model is not None:
-        raw = model.predict(np.ascontiguousarray(test_all[FEATURES].to_numpy(dtype=np.float32)))
-        test_all["new_ranker"] = raw
-        # Ranker blend for everyone (the served policy uses it for returning customers).
-        test_all["production_blend"] = 0.0
-        for _, idx in test_all.groupby("session_id", sort=False).indices.items():
-            test_all.iloc[idx, test_all.columns.get_loc("production_blend")] = blend(
-                test_all["retrieval_score"].to_numpy()[idx], raw[idx]
-            )
         orderings += ["new_ranker", "production_blend"]
-    # The served policy (policy.final_scores): popularity order for customers with
-    # no purchases, the ranker blend for everyone else. Same function as serving.
-    test_all["segment_aware"] = 0.0
-    col = test_all.columns.get_loc("segment_aware")
-    retrieval_arr = test_all["retrieval_score"].to_numpy()
-    pop_arr = test_all["product_event_count"].to_numpy(dtype=float)
-    first_arr = test_all["first_timer"].to_numpy()
-    for _, idx in test_all.groupby("session_id", sort=False).indices.items():
-        test_all.iloc[idx, col] = final_scores(
-            retrieval_arr[idx], pop_arr[idx], bool(first_arr[idx][0]),
-            None if model is None else test_all["new_ranker"].to_numpy()[idx],
-        )
     orderings.append("segment_aware")
+
+    # Leave-one-source-out: rebuild candidate lists without each source, retrain the
+    # ranker on period B without it, and score the served policy on period C.
+    ablation_report = {}
+    if ablation:
+        full = served_ndcg(test_all)
+        for name in SOURCES:
+            pools_bx, _ = build_pools(queries_b, sources_b, history, config, cached_b, drop=(name,))
+            pools_cx, stats_x = build_pools(queries_c, sources_c, history, config, cached_c, drop=(name,))
+            model_x = train_ranker(add_features(pools_bx, sources_b, history, products), FEATURES)
+            test_x = add_features(pools_cx, sources_c, history, products)
+            without = served_ndcg(policy_scores(test_x[test_x["n_purchased"] > 0], model_x, config))
+            without = without.reindex(full.index).fillna(0.0)  # an order with no list scores 0
+            ablation_report[name] = {
+                "pool_recall": stats_x["pool_recall"],
+                "pool_contains_purchase": stats_x["pool_contains_purchase"],
+                "served_ndcg10": float(without.mean()),
+                "ndcg10_change_vs_full": paired_bootstrap(without.to_numpy(), full.to_numpy()),
+            }
+            print(f"Without {name}: pool recall {stats_x['pool_recall']:.4f}, served NDCG@10 {without.mean():.4f}")
+    single = retrieval_stats["single_source_recall"]
+    best_single = max(single, key=single.get)
+    acceptance = {
+        "pool_recall": retrieval_stats["pool_recall"],
+        "best_single_source": best_single,
+        "best_single_source_recall": single[best_single],
+        "passed": retrieval_stats["pool_recall"] >= single[best_single],
+    }
     # Oracle: rank by the simulator's true taste function (a ceiling, not deployable).
     profiles, taste_catalog, catalog_median = load_taste_inputs()
     test_all["oracle"] = oracle_scores(test_all, profiles, taste_catalog, catalog_median)
@@ -359,13 +433,13 @@ def main(use_content: bool = True) -> dict:
     # Relative lift of the served (segment-aware) policy over retrieval order, with the
     # same paired resampling of orders (ratio of means, so the denominator varies too).
     retrieval_ndcg = scores["end_to_end"]["retrieval"][10].set_index("session_id")["ndcg"].reindex(seg.index).to_numpy()
-    served_ndcg = seg.to_numpy()
-    resample = np.random.default_rng(7).integers(0, len(served_ndcg), size=(2000, len(served_ndcg)))
-    rel = served_ndcg[resample].mean(axis=1) / retrieval_ndcg[resample].mean(axis=1) - 1
+    served_arr = seg.to_numpy()
+    resample = np.random.default_rng(7).integers(0, len(served_arr), size=(2000, len(served_arr)))
+    rel = served_arr[resample].mean(axis=1) / retrieval_ndcg[resample].mean(axis=1) - 1
     relative_lift = {
-        "served_ndcg10": float(served_ndcg.mean()),
+        "served_ndcg10": float(served_arr.mean()),
         "retrieval_ndcg10": float(retrieval_ndcg.mean()),
-        "value": float(served_ndcg.mean() / retrieval_ndcg.mean() - 1),
+        "value": float(served_arr.mean() / retrieval_ndcg.mean() - 1),
         "ci_low": float(np.quantile(rel, 0.025)),
         "ci_high": float(np.quantile(rel, 0.975)),
     }
@@ -389,11 +463,11 @@ def main(use_content: bool = True) -> dict:
                 for o in orderings
             }
 
-    ceiling = retrieval_ceiling(queries_c, history, profiles, taste_catalog, catalog_median)
+    ceiling = retrieval_ceiling(queries_c, history, profiles, taste_catalog, catalog_median, k=config.pool_size)
     per_order = test_c.groupby("session_id").agg(hits=("label", "sum"), n=("n_purchased", "first"))
     per_order = per_order[per_order["n"] > 0]
     ceiling["candidate_list_hit_rate"] = retrieval_stats["pool_contains_purchase"] / retrieval_stats["queries"]
-    ceiling["candidate_list_recall"] = float((per_order["hits"] / per_order["n"].clip(upper=POOL_SIZE)).mean())
+    ceiling["candidate_list_recall"] = float((per_order["hits"] / per_order["n"].clip(upper=config.pool_size)).mean())
 
     # Why the order counts differ between sections.
     pool_sizes = test_c.groupby("session_id")["label"].agg(["size", "sum"])
@@ -421,7 +495,8 @@ def main(use_content: bool = True) -> dict:
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "settings": {
-            "pool_size": POOL_SIZE, "per_source": POOL_PER_SOURCE,
+            "pool_size": config.pool_size, "per_source": dict(zip(SOURCES, config.quotas)),
+            "policy": config.to_json(),
             "min_pool": MIN_POOL, "embargo_days": EMBARGO.days, "content_source": use_content,
             "t_rank": str(t_rank), "t_test": str(t_test), "t_end": str(t_end),
             "ranker_training_rows": int(len(train_b)),
@@ -440,6 +515,8 @@ def main(use_content: bool = True) -> dict:
         "gap_closed_ndcg10": gap_closed,
         "retrieval_ceiling": ceiling,
         "order_counts": order_counts,
+        "ablation_leave_one_source_out": ablation_report,
+        "recall_acceptance": acceptance,
         "feature_importance": importance,
     }
     write_report(report)
@@ -450,14 +527,54 @@ def main(use_content: bool = True) -> dict:
 NAMES = {
     "random": "Random order", "popularity": "Popularity (most viewed)",
     "retrieval": "Retrieval score (no ranker)",
-    "new_ranker": "New ranker (11 features)", "production_blend": "Production blend (50/50)",
-    "segment_aware": "Segment-aware (popular for first-timers, blend otherwise)",
+    "new_ranker": "New ranker (11 features)", "production_blend": "Ranker blend (all customers)",
+    "segment_aware": "Served policy (segment-aware)",
     "oracle": "Oracle (true simulator taste, not deployable)",
 }
 VIEW_TEXT = {
     "end_to_end": "Every test order. A bought product missing from the candidate list counts as a miss.",
     "ranking_only": "Only orders whose candidate list contains a bought product: measures ordering alone.",
 }
+
+
+def quota_text(settings: dict) -> str:
+    per = settings["per_source"]
+    return ", ".join(f"{k} {v}" for k, v in per.items()) if isinstance(per, dict) else str(per)
+
+
+def policy_text(settings: dict) -> str:
+    p = settings.get("policy")
+    if not p:
+        return ""
+    first = "popularity order" if p["first_timer_popularity"] else "the same ranker blend"
+    return (f"Policy settings (chosen on the validation period by `python -m recommendations.tune_policy`): "
+            f"pool of {p['pool_size']}, quotas {quota_text(settings)}, ranker weight {p['ranker_blend']:.2f} in the blend "
+            f"with the retrieval score, first-time buyers get {first}, trending window {p['trending_window_days']} days.")
+
+
+def ablation_lines(report: dict) -> list[str]:
+    abl = report.get("ablation_leave_one_source_out") or {}
+    acc = report.get("recall_acceptance")
+    lines = []
+    if abl:
+        full = report["retrieval"]
+        served = report["relative_lift_served_vs_retrieval_ndcg10"]["served_ndcg10"]
+        lines += ["", "## Leave-one-source-out ablation (test period)", "",
+                  "Each row rebuilds the candidate lists without one source, retrains the ranker without it on period B "
+                  "and scores the served policy on the same test orders. The interval is the paired-bootstrap 95% CI of "
+                  "the change in NDCG@10 versus the full system.", "",
+                  "| Without | Pool recall | Served NDCG@10 | Change vs full (95% CI) |", "|---|---|---|---|",
+                  f"| (nothing: full system) | {full['pool_recall']:.4f} | {served:.4f} | – |"]
+        for name, row in abl.items():
+            c = row["ndcg10_change_vs_full"]
+            lines.append(f"| {name} | {row['pool_recall']:.4f} | {row['served_ndcg10']:.4f} | "
+                         f"{c['mean_diff']:+.4f} ({c['ci_low']:+.4f} to {c['ci_high']:+.4f}) |")
+    if acc:
+        verdict = "passed" if acc["passed"] else "FAILED"
+        lines += ["", f"**Recall acceptance check ({verdict}):** combined candidate list recall {acc['pool_recall']:.4f} vs "
+                  f"{acc['best_single_source_recall']:.4f} for the best single source ({acc['best_single_source']}, "
+                  "its own top list of the same size)."]
+    return lines
 
 
 def print_report(report: dict) -> None:
@@ -494,10 +611,10 @@ def write_report(report: dict) -> None:
              "**Question asked:** for each real order in the held-out period, given everything known one hour before it, "
              "does the system rank the products the customer actually bought near the top?", "",
              f"Test orders: {st['test_orders']:,}. Candidate list: up to {st['pool_size']} products "
-             f"({st['per_source']} per source, then filled by score). Products the customer already bought, and products "
+             f"(per-source quotas {quota_text(st)}, then filled by score). Products the customer already bought, and products "
              "that were out of stock, not yet launched or discontinued at the query time, are excluded. The candidate "
              "list and the segment-aware ordering come from `recommendations/policy.py`, the same code the storefront "
-             "serves.", ""]
+             "serves.", "", policy_text(st), ""]
     r = report["retrieval"]
     lines += ["## 1. Retrieval: is the right product in the list at all?", "",
               f"{r['pool_contains_purchase']:,} of {r['queries']:,} test orders ({(r['pool_coverage'] or 0):.1%}) "
@@ -542,6 +659,7 @@ def write_report(report: dict) -> None:
               f"(also up to {report['settings']['pool_size']} products) contain one for **{c['candidate_list_hit_rate']:.1%}** "
               f"(mean recall {c['candidate_list_recall']:.1%}). The gap is how much better retrieval could get with perfect "
               "knowledge of taste.", ""]
+    lines += ablation_lines(report) + [""]
     oc = report["order_counts"]
     lines += ["## Why the order counts differ", "",
               f"- {oc['test_orders']:,} paid orders fall in the test period.",
@@ -562,7 +680,9 @@ def write_report(report: dict) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--no-ablation", action="store_true",
+                        help="Skip the leave-one-source-out ablation (five extra ranker fits).")
     parser.add_argument("--no-content", action="store_true",
                         help="Skip the sentence-transformer source (no model download).")
     args = parser.parse_args()
-    main(use_content=not args.no_content)
+    main(use_content=not args.no_content, ablation=not args.no_ablation)

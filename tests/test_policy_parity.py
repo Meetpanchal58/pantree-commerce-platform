@@ -138,13 +138,15 @@ class PolicyParityTests(unittest.TestCase):
             "order_id": "q", "customer_id": customer_id, "query_time": self.as_of,
             "purchased": {"p4"}, "customer_event_count": 0,
         }])
-        sources = policy.Sources(model_as_of=self.as_of, use_content=True)
-        pools, _ = evaluate.build_pools(queries, sources, self.history)
+        config = policy.load_config()  # the same chosen settings serving reads
+        sources = policy.Sources(model_as_of=self.as_of, use_content=True,
+                                 trending_window_days=config.trending_window_days)
+        pools, _ = evaluate.build_pools(queries, sources, self.history, config)
         featured = evaluate.add_features(pools, sources, self.history, self.products)
         raw = FakeRanker().predict(np.ascontiguousarray(featured[FEATURES].to_numpy(dtype=np.float32)))
         scores = policy.final_scores(
             featured["retrieval_score"].to_numpy(), featured["product_event_count"].to_numpy(),
-            bool(featured["first_timer"].iloc[0]), raw,
+            bool(featured["first_timer"].iloc[0]), raw, config,
         )
         ranked = sorted(zip(featured["product_id"], scores), key=lambda x: (-x[1], x[0]))
         return [(p, round(float(s), 9)) for p, s in ranked]
@@ -166,8 +168,30 @@ class PolicyParityTests(unittest.TestCase):
         self.assertTrue(served)
         self.assertEqual(served, self.evaluated("c4"))
 
+    def test_parity_holds_for_non_default_settings(self):
+        config = policy.PolicyConfig(quotas=(2, 1, 1, 1, 1), pool_size=5, ranker_blend=0.8,
+                                     first_timer_popularity=False, trending_window_days=7)
+        with patch.object(policy, "load_config", return_value=config):
+            self.assertEqual(self.served("c1"), self.evaluated("c1"))
+            self.assertEqual(self.served("c4"), self.evaluated("c4"))
+            self.assertLessEqual(len(self.served("c1")), 5)
+
+    def test_items_say_how_the_row_was_ordered(self):
+        with patch.object(policy, "load_config", return_value=policy.DEFAULT_CONFIG):
+            with patch.object(popularity, "activity_ready", return_value=True):
+                first = serve.recommend("c4", "homepage", {"intent": "personalized"})
+                repeat = serve.recommend("c1", "homepage", {"intent": "personalized"})
+        self.assertEqual({i["ordering"] for i in first}, {"popularity"})
+        self.assertEqual({i["ordering"] for i in repeat}, {"ranker_blend"})
+        off = policy.PolicyConfig(first_timer_popularity=False)
+        with patch.object(policy, "load_config", return_value=off), \
+                patch.object(popularity, "activity_ready", return_value=True):
+            first = serve.recommend("c4", "homepage", {"intent": "personalized"})
+        self.assertEqual({(i["segment"], i["ordering"]) for i in first}, {("first_order", "ranker_blend")})
+
     def test_first_timer_order_is_popularity(self):
-        served = self.served("c4")
+        with patch.object(policy, "load_config", return_value=policy.DEFAULT_CONFIG):
+            served = self.served("c4")
         counts = popularity.activity_counts(None)
         pops = [counts.get(p, 0) for p, _ in served]
         self.assertEqual(pops, sorted(pops, reverse=True))

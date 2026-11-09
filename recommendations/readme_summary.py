@@ -19,13 +19,24 @@ REPORT = Path(__file__).with_name("reports") / "evaluation_report.json"
 ALS_REPORT = Path(__file__).with_name("reports") / "als_tuning.json"
 INSIGHTS = ROOT / "analysis" / "insights_summary.json"
 README = ROOT / "README.md"
+EVALUATION_DOC = ROOT / "docs" / "evaluation.md"
 START, END = "<!-- RESULTS:START -->", "<!-- RESULTS:END -->"
 NAMES = {
     "random": "Random order", "popularity": "Popularity", "retrieval": "Retrieval score (previous production)",
     "new_ranker": "New ranker (11 features)",
-    "production_blend": "Production blend (50/50)", "segment_aware": "**Segment-aware (served)**",
+    "production_blend": "Ranker blend (all customers)", "segment_aware": "**Segment-aware (served)**",
     "oracle": "Oracle (true taste, not deployable)",
 }
+
+
+def policy_summary(settings: dict) -> str:
+    """One phrase describing the served ordering, from the settings the report was run with."""
+    p = settings.get("policy") or {}
+    weight = p.get("ranker_blend", 0.5)
+    blend = f"{weight:.2f} ranker + {1 - weight:.2f} retrieval-score blend"
+    if p.get("first_timer_popularity", True):
+        return f"segment-aware policy (popularity for first-time buyers, {blend} otherwise)"
+    return f"{blend} for every customer (settings chosen on validation)"
 
 
 def pct(x, digits=1):
@@ -49,7 +60,7 @@ def build(report: dict) -> str:
         "- **Problem:** rank products for the home-page \"Recommended for you\" row, predicting the exact product "
         "bought among 10,000, using only data known one hour before the order.",
         "- **Method:** 5 retrieval sources (implicit ALS, trending, recent activity, FAISS content similarity, "
-        "co-purchase) → 11-feature LightGBM LambdaRank → segment-aware policy (popularity for first-time buyers). "
+        f"co-purchase) → 11-feature LightGBM LambdaRank → {policy_summary(st)}. "
         "The evaluated policy is the code the storefront serves (`recommendations/policy.py`).",
         f"- **Evaluation:** 3-period temporal split, {st['embargo_days']}-day embargo, {oc['orders_with_new_products']:,} "
         f"held-out orders (of {oc['test_orders']:,}; see order counts below), paired-bootstrap 95% CIs.",
@@ -98,10 +109,11 @@ def build_eval(report: dict) -> str:
         verdict = "significant" if c["ci_low"] > 0 or c["ci_high"] < 0 else "not significant"
         lines.append(f"- {name.replace('_vs_', ' vs ').replace('_', ' ')}: {c['mean_diff']:+.4f} "
                      f"(95% CI {c['ci_low']:+.4f} to {c['ci_high']:+.4f}, {verdict})")
+    quotas = report["settings"]["per_source"]
+    quota_str = ", ".join(f"{k} {v}" for k, v in quotas.items()) if isinstance(quotas, dict) else f"{quotas} each"
     lines += ["", "Retrieval (is a bought product in the candidate list at all?). Per-source figures use each source's "
-              f"full list; the combined candidate list keeps only {report['settings']['per_source']} per source, which is "
-              "why one source alone can exceed the combined figure (and why keeping more ALS candidates is a cheap "
-              "retrieval improvement to try):", ""]
+              f"full list; the combined candidate list takes a quota from each source ({quota_str}) and then fills "
+              "by score, so one source alone can exceed the combined figure:", ""]
     for name, hits in sorted(ret["source_hits"].items(), key=lambda x: -x[1]):
         lines.append(f"- {name}: {hits / ret['queries']:.1%} of test orders")
     lines += [
@@ -118,6 +130,12 @@ def build_eval(report: dict) -> str:
         f"({oc['dropped_list_under_min_pool']:,} + {oc['dropped_list_all_purchased']:,} dropped), leaving "
         f"{oc['ranking_only_orders']:,}.",
     ]
+    from recommendations.evaluate import ablation_lines, policy_text  # same wording as the report
+
+    if report["settings"].get("policy"):
+        lines += ["", policy_text(report["settings"])]
+    lines += [line.replace("## Leave-one-source-out ablation (test period)", "**Leave-one-source-out ablation (test period).**")
+              for line in ablation_lines(report)]
     if report.get("feature_importance"):
         top = list(report["feature_importance"].items())[:5]
         lines += ["", "Ranker features with the most gain: " + ", ".join(f"`{f}` ({v:.0%})" for f, v in top) + "."]
@@ -197,7 +215,24 @@ def main() -> None:
     if INSIGHTS.exists():
         text = replace_block(text, "INSIGHTS", build_insights(json.loads(INSIGHTS.read_text())))
     README.write_text(text)
+    if EVALUATION_DOC.exists():
+        doc = EVALUATION_DOC.read_text()
+        if "<!-- ABLATION:START -->" in doc:
+            EVALUATION_DOC.write_text(replace_block(doc, "ABLATION", build_policy_block(report)))
     print(build(report))
+
+
+def build_policy_block(report: dict) -> str:
+    """Policy settings and the leave-one-source-out ablation, for docs/evaluation.md."""
+    from recommendations.evaluate import ablation_lines, policy_text
+
+    lines = ["*Generated from `recommendations/reports/evaluation_report.json` by "
+             "`python -m recommendations.readme_summary`.*", ""]
+    if report["settings"].get("policy"):
+        lines.append(policy_text(report["settings"]))
+    lines += [line.replace("## Leave-one-source-out ablation (test period)", "### Leave-one-source-out ablation (test period)")
+              for line in ablation_lines(report)]
+    return "\n".join(lines).strip()
 
 
 if __name__ == "__main__":

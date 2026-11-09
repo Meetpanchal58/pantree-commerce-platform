@@ -102,7 +102,8 @@ def _get_fbt(
 
 
 def _get_popular(limit: int = 100, **_: Any) -> list[dict]:
-    return popularity.get_popular(limit=limit)
+    # Same trending window as the personalised row's trending source.
+    return popularity.get_popular(limit=limit, window_days=policy.load_config().trending_window_days)
 
 
 def _get_deals(limit: int = 100, **_: Any) -> list[dict]:
@@ -197,20 +198,28 @@ def _personalized(customer_id: str | None, context: dict[str, Any]) -> list[dict
     if limit < 1:
         raise ValueError("Recommendation limit must be positive")
     catalog = _catalog()
-    segment = "first_order"
+    segment, ordering = "first_order", "catalog"
     if not popularity.activity_ready():
         # Warm-up only: activity counts are still loading in the background.
         logger.info("[homepage] activity warming; serving the catalog fallback")
         pool = popularity.get_popular(limit=limit)
         ranked = sorted(pool, key=lambda item: (-item["score"], item["product_id"]))
     else:
+        config = policy.load_config()  # chosen on validation by tune_policy.py
         state = customer_state(customer_id, context)
-        sources = policy.Sources(model_as_of=None, use_content=heavy_models_enabled())
+        sources = policy.Sources(
+            model_as_of=None, use_content=heavy_models_enabled(),
+            trending_window_days=config.trending_window_days,
+        )
         exclude = _excluded_product_ids(context) | set(_context_product_ids(context))
-        pool, _ = policy.build_candidates(state, sources, as_of=None, exclude=exclude)
+        pool, _ = policy.build_candidates(state, sources, as_of=None, exclude=exclude, config=config)
         model = _load_ranker() if context.get("use_ranker", True) else None  # False: A/B control
-        ranked = policy.rank(state, pool, sources, as_of=None, model=model, products=catalog)
+        ranked = policy.rank(state, pool, sources, as_of=None, model=model, products=catalog, config=config)
         segment = "first_order" if state.first_timer else "repeat"
+        if state.first_timer and config.first_timer_popularity:
+            ordering = "popularity"
+        else:
+            ordering = "ranker_blend" if model is not None else "retrieval"
     results = []
     for item in ranked:
         if item["product_id"] not in catalog.index:
@@ -225,6 +234,7 @@ def _personalized(customer_id: str | None, context: dict[str, Any]) -> list[dict
             "brand_name": product["brand_name"],
             "current_price": product["current_price"],
             "segment": segment,
+            "ordering": ordering,  # how the row was ordered (drives the UI heading)
         })
         if len(results) >= min(limit, PERSONALIZED_TOP_K):
             break
@@ -324,7 +334,7 @@ def warm_recommendation_caches() -> None:
     purchased_products()
     popularity.warm_popularity()
     popularity.warm_activity_cache()
-    popularity.get_popular(100)
+    _get_popular(100)
     if not heavy_models_enabled():
         logger.info(
             "Skipping collaborative and content models (PANTREE_HEAVY_RECOMMENDATIONS=0)"
