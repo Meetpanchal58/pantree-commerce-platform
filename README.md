@@ -10,11 +10,11 @@ leads with results; setup is under [How to run](#how-to-run).
 *Generated from `recommendations/reports/evaluation_report.json` by `python -m recommendations.readme_summary`.*
 
 - **Problem:** rank products for the home-page "Recommended for you" row, predicting the exact product bought among 10,000, using only data known one hour before the order.
-- **Method:** 5 retrieval sources (implicit ALS, trending, recent activity, FAISS content similarity, co-purchase) → 11-feature LightGBM LambdaRank → segment-aware policy (popularity for first-time buyers).
-- **Evaluation:** 3-period temporal split, 7-day embargo, 5,433 held-out orders (of 5,633; see order counts below), paired-bootstrap 95% CIs.
-- **Headline:** served policy NDCG@10 0.0308 vs 0.0224 for retrieval order: +0.0083 absolute (95% CI +0.0059 to +0.0107), +37% relative (95% CI +25% to +51%); 4.4× random. Within lists that contain a bought product (757 orders), NDCG@10 is 0.248.
-- **Ceiling:** the served policy captures 72% of the achievable gain from random to an oracle that knows each customer's true taste (95% CI 61% to 83%).
-- **Bottleneck:** candidate lists contain a bought product for 13.6% of orders; the top 100 by true taste would contain one for 38.8%. Next step: better retrieval (taste-aware candidate generation, e.g. a two-tower model), not more ranking features.
+- **Method:** 5 retrieval sources (implicit ALS, trending, recent activity, FAISS content similarity, co-purchase) → 11-feature LightGBM LambdaRank → segment-aware policy (popularity for first-time buyers). The evaluated policy is the code the storefront serves (`recommendations/policy.py`).
+- **Evaluation:** 3-period temporal split, 7-day embargo, 5,647 held-out orders (of 5,831; see order counts below), paired-bootstrap 95% CIs.
+- **Headline:** served policy NDCG@10 0.0371 vs 0.0239 for retrieval order: +0.0132 absolute (95% CI +0.0108 to +0.0156), +55% relative (95% CI +44% to +69%); 7.1× random. Within lists that contain a bought product (900 orders), NDCG@10 is 0.263.
+- **Ceiling:** the served policy captures 82% of the achievable gain from random to an oracle that knows each customer's true taste (95% CI 72% to 92%).
+- **Bottleneck:** candidate lists contain a bought product for 15.4% of orders; the top 100 by true taste would contain one for 39.6%. Next step: better retrieval (taste-aware candidate generation, e.g. a two-tower model), not more ranking features.
 - **Caveat:** synthetic data with known ground truth; online impression/click logging and an A/B split are built, but there is no real traffic yet.
 <!-- RESULTS:END -->
 
@@ -40,7 +40,7 @@ to adjust the related-products heading.
 
 | Storefront row | Selection logic |
 |---|---|
-| **Recommended for you** (homepage) | Runs the shared policy in `recommendations/policy.py`, the same code the offline evaluation scores. Five sources: seeded implicit ALS (views < cart additions < order quantity), products similar to the anchor (the latest purchase, else the latest viewed product), products bought in the same orders as the anchor, trending products (last 30 days of views, cart additions and wishlists), and popular items of the same type and audience as the customer's recent products. Recent signed-in views and purchases from SQLite are merged with warehouse history. Already-purchased and unavailable (inactive or out-of-stock) products are dropped; up to 20 come from each source, then the list is filled to 100 by score. Customers with no purchases see the list ordered by popularity (the UI labels it “Popular while we learn your taste”), because the evaluation showed popularity predicts first purchases best; everyone else gets a 50/50 blend of retrieval score and the LightGBM ranker. While activity data is still loading at start-up the row shows highly rated in-stock products. |
+| **Recommended for you** (homepage) | Runs the shared policy in `recommendations/policy.py`, the same code the offline evaluation scores. Five sources: seeded implicit ALS (views < cart additions < order quantity), products similar to the anchor (the latest purchase, else the latest viewed product), products bought in the same orders as the anchor, trending products (last 30 days of views, cart additions and wishlists), and popular items of the same type and audience as the customer's recent products. Recent signed-in views and purchases from SQLite are merged with warehouse history. Already-purchased and unavailable (inactive or out-of-stock) products are dropped; up to 20 come from each source, then the list is filled to 100 by score. Customers with no purchases see the list ordered by popularity (the UI labels it “Popular while we learn your taste”), a rule adopted when an earlier evaluation found popularity beat the ranker for first purchases (in the current test period the ranker alone scores higher for first-time buyers; the rule will be re-chosen on the validation period, not changed on test); everyone else gets a 50/50 blend of retrieval score and the LightGBM ranker. While activity data is still loading at start-up the row shows highly rated in-stock products. |
 | **Frequently bought together** (product page) | Tries evidence in order: products that appeared in the same realized orders as the anchor; products viewed in the same browsing sessions; product types that shoppers buy together more often than chance (learned from orders); then other highly rated products from the same department. It moves to the next source if the earlier source has no eligible results. Candidates must be active, in stock, a different product type from the anchor, and audience-compatible; the anchor and already-purchased products are removed. Duplicate items across the two displayed product-page rows are removed. The heading changes when results come solely from co-view, learned product-type, or department-fallback evidence. |
 | **Similar products** (product page) | Searches a FAISS index of Sentence Transformer embeddings built from product name, description, and attributes. Results are filtered to the same product type and a compatible gender/audience (including universal categories), with inactive, out-of-stock, purchased, anchor, and duplicate-row products removed. If there are too few embedding matches, it fills from the same type/audience using rating, review count, and product ID as deterministic tie-breaks. |
 
@@ -81,7 +81,7 @@ The recommendation dependencies in `requirements.txt` support seeded implicit AL
 Sentence Transformers + FAISS, and a LightGBM ranker. The ranker is optional: until
 `recommendations/ranker.txt` exists (written by the evaluation), the service sorts by fused
 retrieval scores. Without the optional packages, those sources log a warning and
-popularity/affinity/deals still work.
+trending, recent activity, frequently-bought-together and deals still work.
 
 ### How the three recommendation rows work
 
@@ -120,7 +120,7 @@ products the customer actually bought near the top?** That is the job of the hom
 - **Same lists, different orderings.** For each order a candidate list of up to 100 products is
   built (20 per source, then filled by score; already-bought and then-unavailable products
   excluded) by the same code the storefront serves. Random order,
-  popularity, retrieval score (production without a ranker), the old 3-feature ranker, the new
+  popularity, retrieval score (production without a ranker), the
   11-feature ranker, the production 50/50 blend and a segment-aware policy all rank the *same*
   lists, so differences come from ranking alone.
 - **Two views.** *End to end* uses every test order (a bought product missing from the list counts
@@ -141,41 +141,39 @@ products the customer actually bought near the top?** That is the job of the hom
 
 End-to-end NDCG@10 (every held-out order with a new product; a bought product missing from the candidate list counts as a miss), and the share of the random → oracle gap each ordering captures:
 
-| Ordering | All (5,433) | First-time buyers (1,495) | Repeat buyers (3,938) | Ranking-only, all | Share of achievable gain |
+| Ordering | All (5,647) | First-time buyers (1,521) | Repeat buyers (4,126) | Ranking-only, all | Share of achievable gain |
 |---|---|---|---|---|---|
-| Random order | 0.0071 | 0.0035 | 0.0084 | 0.059 | – |
-| Popularity | 0.0139 | 0.0197 | 0.0117 | 0.111 | 21% (13% to 27%) |
-| Retrieval score (previous production) | 0.0224 | 0.0111 | 0.0267 | 0.180 | 46% (37% to 56%) |
-| Old ranker (3 features) | 0.0043 | 0.0012 | 0.0055 | 0.038 | -8% (-15% to -3%) |
-| New ranker (11 features) | 0.0307 | 0.0201 | 0.0347 | 0.248 | 71% (60% to 84%) |
-| Production blend (50/50) | 0.0314 | 0.0220 | 0.0350 | 0.253 | 73% (63% to 85%) |
-| **Segment-aware (served)** | 0.0308 | 0.0197 | 0.0350 | 0.248 | 72% (61% to 83%) |
-| Oracle (true taste, not deployable) | 0.0402 | 0.0375 | 0.0412 | 0.337 | – |
+| Random order | 0.0052 | 0.0042 | 0.0056 | 0.039 | – |
+| Popularity | 0.0166 | 0.0228 | 0.0142 | 0.116 | 29% (23% to 36%) |
+| Retrieval score (previous production) | 0.0239 | 0.0104 | 0.0289 | 0.169 | 48% (40% to 57%) |
+| New ranker (11 features) | 0.0390 | 0.0259 | 0.0438 | 0.278 | 87% (77% to 97%) |
+| Production blend (50/50) | 0.0369 | 0.0221 | 0.0424 | 0.263 | 82% (72% to 92%) |
+| **Segment-aware (served)** | 0.0371 | 0.0228 | 0.0424 | 0.263 | 82% (72% to 92%) |
+| Oracle (true taste, not deployable) | 0.0440 | 0.0380 | 0.0462 | 0.325 | – |
 
 Paired bootstrap over orders (end-to-end NDCG@10):
 
-- new ranker vs retrieval: +0.0083 (95% CI +0.0053 to +0.0111, significant)
-- new ranker vs popularity: +0.0168 (95% CI +0.0140 to +0.0197, significant)
-- new ranker vs legacy ranker: +0.0264 (95% CI +0.0227 to +0.0303, significant)
-- new ranker vs random: +0.0236 (95% CI +0.0198 to +0.0275, significant)
-- segment aware vs retrieval: +0.0083 (95% CI +0.0059 to +0.0107, significant)
-- segment aware vs popularity: +0.0169 (95% CI +0.0143 to +0.0196, significant)
-- segment aware vs production blend: -0.0006 (95% CI -0.0016 to +0.0003, not significant)
+- new ranker vs retrieval: +0.0151 (95% CI +0.0125 to +0.0178, significant)
+- new ranker vs popularity: +0.0224 (95% CI +0.0193 to +0.0257, significant)
+- new ranker vs random: +0.0337 (95% CI +0.0298 to +0.0376, significant)
+- segment aware vs retrieval: +0.0132 (95% CI +0.0108 to +0.0156, significant)
+- segment aware vs popularity: +0.0206 (95% CI +0.0177 to +0.0236, significant)
+- segment aware vs production blend: +0.0002 (95% CI -0.0011 to +0.0016, not significant)
 
 Retrieval (is a bought product in the candidate list at all?). Per-source figures use each source's full list; the combined candidate list keeps only 20 per source, which is why one source alone can exceed the combined figure (and why keeping more ALS candidates is a cheap retrieval improvement to try):
 
-- collaborative: 15.2% of test orders
-- recent_activity: 5.5% of test orders
-- trending: 5.3% of test orders
+- collaborative: 14.4% of test orders
+- trending: 6.3% of test orders
+- recent_activity: 6.2% of test orders
 - content: 4.5% of test orders
-- fbt: 2.7% of test orders
-- all sources combined (candidate list of up to 100): 13.6%; **retrieval ceiling** (top 100 of all eligible products by true taste): 38.8%
+- fbt: 2.6% of test orders
+- all sources combined (candidate list of up to 100): 15.4%; **retrieval ceiling** (top 100 of all eligible products by true taste): 39.6%
 
-Order counts: 5,633 paid orders in the test period. 26 came from customers with no earlier activity and are dropped by a known feature-building issue (pandas drops groups with a missing history anchor; left unchanged so results stay comparable). 174 only re-bought earlier products (excluded from candidates), leaving 5,433 for the end-to-end tables. 764 had a bought product in the list (7 of them no-history orders); ranking-only tables also need at least 10 candidates and one not-bought candidate (0 + 0 dropped), leaving 757.
+Order counts: 5,831 paid orders in the test period. 25 came from customers with no earlier activity (cold start); they stay in and are scored with documented default features. 184 only re-bought earlier products (excluded from candidates), leaving 5,647 for the end-to-end tables. 900 had a bought product in the list; ranking-only tables also need at least 10 candidates and one not-bought candidate (0 + 0 dropped), leaving 900.
 
-Ranker features with the most gain: `log_product_popularity` (21%), `n_sources` (17%), `retrieval_score` (13%), `source_id` (13%), `log_price_ratio` (11%).
+Ranker features with the most gain: `n_sources` (22%), `retrieval_score` (15%), `log_price_ratio` (13%), `source_id` (13%), `log_product_popularity` (12%).
 
-ALS tuning (`python -m recommendations.tune_als`, chosen on the validation period, checked once on the test period): best 32 factors, regularisation 1.0, weights (view, cart, purchase) (1, 3, 5); held-out Recall@20 0.0959 (original 48 factors, 1/3/5) → 0.0975. Serving currently uses 32 factors, regularisation 0.01, weights (0.5, 3.0, 8.0). Full grid: [`als_tuning.md`](recommendations/reports/als_tuning.md).
+ALS tuning (`python -m recommendations.tune_als`, chosen on the validation period with a 7-day embargo, checked once on the test period): 32 factors, regularisation 0.1, weights (view, cart, purchase) (1, 3, 5); held-out Recall@20 0.0900 with the previous serving settings → 0.0900. Serving and evaluation read these settings from `als_tuning.json`. Full grid: [`als_tuning.md`](recommendations/reports/als_tuning.md).
 <!-- EVAL:END -->
 
 To reproduce: generate with `PANTREE_TODAY=2026-06-30`, then run `python -m recommendations.tune_als`,
