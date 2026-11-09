@@ -43,7 +43,7 @@ FEATURES = [
 SOURCE_FAMILIES = {
     "collaborative": 0,
     "content": 1, "similar_fallback": 1,
-    "fbt": 2, "session_pairing": 2, "curated_complement": 2, "category_fallback": 2,
+    "fbt": 2, "session_pairing": 2, "learned_complement": 2, "category_fallback": 2,
     "trending": 3, "popularity": 3, "deals": 3, "catalog_fallback": 3,
     "recent_activity": 4, "deals_on_viewed": 4, "personalized": 4,
 }
@@ -73,7 +73,13 @@ def candidate_features(
     product_event_counts: pd.Series | None,
     anchor_product_id: str | None = None,
 ) -> pd.DataFrame:
-    """Add ranker features to a candidate frame (one row per candidate)."""
+    """Add ranker features to a candidate frame (one row per candidate).
+
+    Cold-start defaults (customer with no earlier views or purchases, so an empty
+    profile and no anchor): log_customer_activity = log_customer_purchases = 0,
+    category_affinity = 0, log_price_ratio = 0 (i.e. price equal to the customer's
+    typical price), same_type_as_anchor = 0. Product-side features are unaffected.
+    """
     frame = frame.copy()
     ids = frame["product_id"]
     meta = products.reindex(ids)

@@ -256,6 +256,10 @@ class RecommendationSafetyTests(unittest.TestCase):
 
 
 class FrequentlyBoughtTogetherTests(unittest.TestCase):
+    def setUp(self):
+        fbt.clear_caches()
+        self.addCleanup(fbt.clear_caches)
+
     @staticmethod
     def product_rows():
         return pd.DataFrame(
@@ -263,6 +267,8 @@ class FrequentlyBoughtTogetherTests(unittest.TestCase):
                 ("anchor", "Apparel", "Night suits", "Men", True, 4.0, 10),
                 ("bought-with", "Apparel", "Lounge Pants", "Men", True, 4.5, 20),
                 ("pairing", "Apparel", "Lounge Pants", "Men", True, 4.5, 20),
+                ("night-2", "Apparel", "Night suits", "Men", True, 4.0, 5),
+                ("jeans", "Apparel", "Jeans", "Men", True, 3.0, 5),
             ],
             columns=[
                 "product_id", "h1_category", "h3_category", "gender",
@@ -270,92 +276,78 @@ class FrequentlyBoughtTogetherTests(unittest.TestCase):
             ],
         ).set_index("product_id", drop=False)
 
-    def test_same_order_purchase_evidence_takes_priority(self):
-        orders = pd.DataFrame(
-            [
-                ("anchor", "order-1"),
-                ("bought-with", "order-1"),
-                ("unrelated", "order-2"),
-            ],
-            columns=["product_id", "order_id"],
+    @staticmethod
+    def orders(rows):
+        return pd.DataFrame(
+            [(pid, oid, pd.Timestamp(ts)) for pid, oid, ts in rows],
+            columns=["product_id", "order_id", "order_timestamp"],
         )
-        affinity = pd.DataFrame(
-            columns=[
-                "product_id", "related_product_id", "affinity_type",
-                "affinity_score", "co_purchase_count", "co_view_count",
-            ]
+
+    @staticmethod
+    def views(rows):
+        return pd.DataFrame(
+            [(sid, pid, pd.Timestamp(ts)) for sid, pid, ts in rows],
+            columns=["session_id", "product_id", "event_timestamp"],
         )
+
+    def run_fbt(self, orders, views, products=None, as_of=None, **settings):
+        stock = pd.Series({pid: 3 for pid in self.product_rows().index})
         with (
             patch.object(fbt, "read_realized_transactions", return_value=orders),
             patch.object(fbt, "realized_transactions_ready", return_value=True),
-            patch.object(fbt, "_affinity", return_value=affinity),
-            patch.object(fbt, "read_products", return_value=self.product_rows()),
-            patch.object(
-                fbt,
-                "read_stock",
-                return_value=pd.Series({"anchor": 2, "bought-with": 3, "pairing": 1}),
-            ),
+            patch.object(fbt, "read_pdp_views", return_value=views),
+            patch.object(fbt, "read_products", return_value=products if products is not None else self.product_rows()),
+            patch.object(fbt, "read_stock", return_value=stock),
+            patch.multiple(fbt, **settings) if settings else patch.object(fbt, "MAX_PRODUCTS_PER_BASKET", 20),
         ):
-            candidates = fbt.get_frequently_bought_together(["anchor"])
+            return fbt.get_frequently_bought_together(["anchor"], as_of=as_of)
 
+    def test_same_order_purchase_evidence_takes_priority(self):
+        orders = self.orders([
+            ("anchor", "order-1", "2026-01-01"),
+            ("bought-with", "order-1", "2026-01-01"),
+            ("jeans", "order-2", "2026-01-02"),
+        ])
+        views = self.views([("s1", "anchor", "2026-01-01"), ("s1", "pairing", "2026-01-01")])
+        candidates = self.run_fbt(orders, views)
         self.assertEqual([item["product_id"] for item in candidates], ["bought-with"])
         self.assertEqual(candidates[0]["source"], "fbt")
         self.assertEqual(candidates[0]["reason"], "Related product pairing")
 
-    def test_curated_pairing_fills_missing_purchase_and_coview_edges(self):
-        products = self.product_rows().drop(index="bought-with")
-        empty_orders = pd.DataFrame(columns=["product_id", "order_id"])
-        empty_affinity = pd.DataFrame(
-            columns=[
-                "product_id", "related_product_id", "affinity_type",
-                "affinity_score", "co_purchase_count", "co_view_count",
-            ]
-        )
-        with (
-            patch.object(fbt, "read_realized_transactions", return_value=empty_orders),
-            patch.object(fbt, "realized_transactions_ready", return_value=False),
-            patch.object(fbt, "_affinity", return_value=empty_affinity),
-            patch.object(fbt, "read_products", return_value=products),
-            patch.object(
-                fbt,
-                "read_stock",
-                return_value=pd.Series({"anchor": 2, "bought-with": 3, "pairing": 1}),
-            ),
-        ):
-            candidates = fbt.get_frequently_bought_together(["anchor"])
-
-        self.assertEqual([item["product_id"] for item in candidates], ["pairing"])
-        self.assertEqual(candidates[0]["source"], "curated_complement")
-
-    def test_co_view_pairing_precedes_curated_fallback(self):
-        affinity = pd.DataFrame(
-            [
-                ("anchor", "pairing", "complementary_product", 0.8, 0, 5),
-            ],
-            columns=[
-                "product_id", "related_product_id", "affinity_type",
-                "affinity_score", "co_purchase_count", "co_view_count",
-            ],
-        )
-        with (
-            patch.object(
-                fbt,
-                "read_realized_transactions",
-                return_value=pd.DataFrame(columns=["product_id", "order_id"]),
-            ),
-            patch.object(fbt, "realized_transactions_ready", return_value=True),
-            patch.object(fbt, "_affinity", return_value=affinity),
-            patch.object(fbt, "read_products", return_value=self.product_rows()),
-            patch.object(
-                fbt,
-                "read_stock",
-                return_value=pd.Series({"anchor": 2, "bought-with": 3, "pairing": 1}),
-            ),
-        ):
-            candidates = fbt.get_frequently_bought_together(["anchor"])
-
+    def test_co_view_pairing_precedes_learned_complements(self):
+        views = self.views([("s1", "anchor", "2026-01-01"), ("s1", "pairing", "2026-01-01")])
+        candidates = self.run_fbt(self.orders([]), views)
         self.assertEqual([item["product_id"] for item in candidates], ["pairing"])
         self.assertEqual(candidates[0]["source"], "session_pairing")
+
+    def test_learned_type_complements_fill_missing_edges(self):
+        # Night suits and Lounge Pants are bought together more often than chance;
+        # the anchor itself has no order or co-view evidence.
+        rows = []
+        for i in range(3):
+            rows += [("night-2", f"pair-{i}", "2026-01-01"), ("bought-with", f"pair-{i}", "2026-01-01")]
+            rows += [("jeans", f"solo-{i}", "2026-01-01")]
+        candidates = self.run_fbt(self.orders(rows), self.views([]), MIN_TYPE_PAIR_SUPPORT=3)
+        self.assertEqual({item["product_id"] for item in candidates}, {"bought-with", "pairing"})
+        self.assertEqual({item["source"] for item in candidates}, {"learned_complement"})
+
+    def test_type_pairs_below_support_are_not_learned(self):
+        rows = [("night-2", "o1", "2026-01-01"), ("bought-with", "o1", "2026-01-01"),
+                ("jeans", "o2", "2026-01-01")]
+        candidates = self.run_fbt(self.orders(rows), self.views([]))
+        self.assertEqual({item["source"] for item in candidates}, {"category_fallback"})
+
+    def test_pairs_after_as_of_are_ignored(self):
+        orders = self.orders([
+            ("anchor", "early", "2026-01-01"), ("bought-with", "early", "2026-01-01"),
+            ("anchor", "late", "2026-03-01"), ("pairing", "late", "2026-03-01"),
+        ])
+        views = self.views([("s-late", "anchor", "2026-03-01"), ("s-late", "jeans", "2026-03-01")])
+        before = self.run_fbt(orders, views, as_of="2026-02-01")
+        self.assertEqual([item["product_id"] for item in before], ["bought-with"])
+        fbt.clear_caches()
+        after = self.run_fbt(orders, views)
+        self.assertEqual({item["product_id"] for item in after}, {"bought-with", "pairing"})
 
 
 if __name__ == "__main__":
