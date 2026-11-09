@@ -63,7 +63,7 @@ def build(report: dict) -> str:
         f"co-purchase) → 11-feature LightGBM LambdaRank → {policy_summary(st)}. "
         "The evaluated policy is the code the storefront serves (`recommendations/policy.py`).",
         f"- **Evaluation:** 3-period temporal split, {st['embargo_days']}-day embargo, {oc['orders_with_new_products']:,} "
-        f"held-out orders (of {oc['test_orders']:,}; see order counts below), paired-bootstrap 95% CIs.",
+        f"held-out orders (of {oc['test_orders']:,}; order counts in docs/evaluation.md), paired-bootstrap 95% CIs.",
         f"- **Headline:** served policy NDCG@10 {served:.4f} vs {rel['retrieval_ndcg10']:.4f} for retrieval order: "
         f"{diff['mean_diff']:+.4f} absolute (95% CI {diff['ci_low']:+.4f} to {diff['ci_high']:+.4f}), "
         f"{rel['value']:+.0%} relative (95% CI {rel['ci_low']:+.0%} to {rel['ci_high']:+.0%}); "

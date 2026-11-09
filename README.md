@@ -30,7 +30,7 @@ taste", so the evaluation can also say how close the system gets to perfect know
 
 - **Problem:** rank products for the home-page "Recommended for you" row, predicting the exact product bought among 10,000, using only data known one hour before the order.
 - **Method:** 5 retrieval sources (implicit ALS, trending, recent activity, FAISS content similarity, co-purchase) → 11-feature LightGBM LambdaRank → 0.75 ranker + 0.25 retrieval-score blend for every customer (settings chosen on validation). The evaluated policy is the code the storefront serves (`recommendations/policy.py`).
-- **Evaluation:** 3-period temporal split, 7-day embargo, 5,647 held-out orders (of 5,831; see order counts below), paired-bootstrap 95% CIs.
+- **Evaluation:** 3-period temporal split, 7-day embargo, 5,647 held-out orders (of 5,831; order counts in docs/evaluation.md), paired-bootstrap 95% CIs.
 - **Headline:** served policy NDCG@10 0.0386 vs 0.0239 for retrieval order: +0.0147 absolute (95% CI +0.0122 to +0.0172), +61% relative (95% CI +49% to +76%); 6.2× random. Within lists that contain a bought product (1,191 orders), NDCG@10 is 0.205.
 - **Ceiling:** the served policy captures 83% of the achievable gain from random to an oracle that knows each customer's true taste (95% CI 73% to 94%).
 - **Bottleneck:** candidate lists contain a bought product for 20.4% of orders; the top 150 by true taste would contain one for 46.2%. Next step: better retrieval (taste-aware candidate generation, e.g. a two-tower model), not more ranking features.
@@ -76,7 +76,7 @@ storefront row works: [docs/recommender.md](docs/recommender.md).
 - **Baselines and a ceiling.** Random, popularity and retrieval order are scored on the same lists,
   plus an oracle that knows each customer's true taste. Differences come with paired-bootstrap 95%
   confidence intervals.
-- **Validated data.** `validators/preflight_checks.py` runs about forty consistency checks on the
+- **Validated data.** `validators/preflight_checks.py` runs the dataset consistency checks on the
   generated warehouse; CI runs it and the test suite on every push.
 
 Details: [docs/evaluation.md](docs/evaluation.md).
