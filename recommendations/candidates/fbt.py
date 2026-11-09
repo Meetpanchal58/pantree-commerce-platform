@@ -120,7 +120,9 @@ def type_complements(as_of=None) -> dict[str, list[str]]:
     if pairs.empty:
         return {}
     support = pairs.groupby(["h3_category", "h3_category_other"]).size().rename("support").reset_index()
-    support = support[support["support"] >= MIN_TYPE_PAIR_SUPPORT]
+    support = support[support["support"] >= MIN_TYPE_PAIR_SUPPORT].copy()
+    if support.empty:  # nothing frequent enough to learn from
+        return {}
     support["lift"] = (
         support["support"] * n_orders
         / (support["h3_category"].map(type_orders) * support["h3_category_other"].map(type_orders))

@@ -52,7 +52,9 @@ def build_interactions(events, orders, weights, as_of=None) -> pd.Series:
         subset=["customer_id", "product_id", "event_timestamp"]
     )
     events["weight"] = events["event_type"].map(browse_weights)
-    interactions = events.groupby(["customer_id", "product_id"])["weight"].sum()
+    # Explicit float dtypes: with pandas 3.1, an empty groupby result can come back as a
+    # string column, and adding it to a numeric one fails.
+    interactions = events.groupby(["customer_id", "product_id"])["weight"].sum().astype(float)
 
     orders = orders.copy()
     if as_of is not None:
@@ -67,9 +69,9 @@ def build_interactions(events, orders, weights, as_of=None) -> pd.Series:
         right_on=["customer_id", "event_day"],
         how="inner",
     )
-    purchases = orders.groupby(["customer_id", "product_id"])["quantity"].sum() * purchase_w
+    purchases = orders.groupby(["customer_id", "product_id"])["quantity"].sum().astype(float) * purchase_w
     same_day_bonus = (
-        same_day_orders.groupby(["customer_id", "product_id"])["quantity"].sum() * 0.5
+        same_day_orders.groupby(["customer_id", "product_id"])["quantity"].sum().astype(float) * 0.5
     )
     purchases = purchases.add(same_day_bonus, fill_value=0)
     return interactions.add(purchases, fill_value=0)

@@ -21,7 +21,7 @@ were generated consistently.
 **Warning:** `initialize` replaces generated Parquet files and simulator progress in this folder.
 Save a copy first if you need to keep an existing generated dataset. It does not create or reset
 the live shop database; that is a separate step described in the
-[main setup guide](../README.md#start-here-setup-and-use-pantree).
+[main setup guide](../docs/running.md#how-to-run).
 
 ## Add more days later
 
@@ -36,4 +36,4 @@ dataset that was already created with `initialize`.
 
 Optional settings such as the number of customers, number of products, random seed, and end date
 are described in the main guide's
-[data size settings](../README.md#change-the-dataset-size-optional).
+[data size settings](../docs/running.md#change-the-dataset-size-optional).

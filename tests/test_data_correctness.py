@@ -183,3 +183,16 @@ class PurchasedSetTests(unittest.TestCase):
         histories = {"c1": {"bought": ["p1", "p2"], "viewed": []}, "c2": {"bought": [], "viewed": ["p3"]}}
         with patch.object(common, "customer_histories", return_value=histories):
             self.assertEqual(common.purchased_products(), {"c1": frozenset({"p1", "p2"})})
+
+
+class EmptyInputTests(unittest.TestCase):
+    """Empty frames must not trip pandas dtype rules (seen with pandas 3.1 in CI)."""
+
+    def test_empty_interactions_are_numeric(self):
+        events = pd.DataFrame({"customer_id": pd.Series([], dtype="str"), "product_id": pd.Series([], dtype="str"),
+                               "event_type": pd.Series([], dtype="str"), "event_timestamp": pd.Series([], dtype="str")})
+        orders = pd.DataFrame({"customer_id": ["c1"], "product_id": ["p1"], "quantity": [1],
+                               "order_timestamp": [pd.Timestamp("2026-01-01")]})
+        weights = collaborative.build_interactions(events, orders, (1, 3, 8))
+        self.assertEqual(weights[("c1", "p1")], 8.0)
+        self.assertTrue(pd.api.types.is_float_dtype(weights))
