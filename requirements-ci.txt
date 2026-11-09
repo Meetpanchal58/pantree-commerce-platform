@@ -1,0 +1,2 @@
+# Test runner for CI (kept out of requirements.txt / requirements-render.txt).
+pytest==8.3.5

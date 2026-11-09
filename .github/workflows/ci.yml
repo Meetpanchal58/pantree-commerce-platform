@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Small, deterministic dataset so the job finishes in a few minutes.
+      PANTREE_SEED: "42"
+      PANTREE_CUSTOMERS: "1500"
+      PANTREE_PRODUCTS: "800"
+      PANTREE_SELLERS: "60"
+      PANTREE_TODAY: "2025-12-31"
+      HF_HUB_OFFLINE: "1"  # tests never download the sentence-transformer model
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.txt
+      - name: Install dependencies (CPU-only PyTorch)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
+          pip install -r requirements-ci.txt
+      - name: Generate a small dataset
+        run: python generate_data.py --mode initialize
+      - name: Preflight checks
+        run: python validators/preflight_checks.py
+      - name: Tests
+        run: python -m pytest -q
