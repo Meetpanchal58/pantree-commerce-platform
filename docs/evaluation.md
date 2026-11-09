@@ -1,8 +1,100 @@
-# Evaluation notes
+# Evaluation
 
-How the offline evaluation (`recommendations/evaluate.py`) defines its inputs, and
-why some choices that look like leaks are not. Numbers live in
-`recommendations/reports/evaluation_report.md`; this page has none.
+How the recommender is evaluated offline, the full results, and why choices that look like leaks are not.
+The headline numbers are summarised in the [README](../README.md#results-at-a-glance).
+
+## Method
+
+`python -m recommendations.evaluate` answers one question for every real order in the held-out
+final period: **given everything known one hour before the order, does the system rank the
+products the customer actually bought near the top?** That is the job of the home-page
+"Recommended for you" row.
+
+- **Three time periods, no peeking.** ALS and co-purchases learn only from data before each
+  period's cut-off, with a 7-day gap; trending, recent activity, popularity and stock are taken as
+  of each query time. The ranker is
+  trained on candidate lists for orders in the middle period (B) and everything is scored on the
+  final period (C).
+- **Same lists, different orderings.** For each order a candidate list is built (a quota per
+  source, then filled by score to the pool size; already-bought and then-unavailable products
+  excluded) by the same code the storefront serves, using the settings chosen on validation. Random order,
+  popularity, retrieval score (production without a ranker), the
+  11-feature ranker, the ranker blend and the served policy all rank the *same*
+  lists, so differences come from ranking alone.
+- **Two views.** *End to end* uses every test order (a bought product missing from the list counts
+  as a miss). *Ranking only* uses orders whose list contains a bought product.
+- **Segments and uncertainty.** Results are reported for first-time and repeat buyers, with a
+  power label (under 100 orders = underpowered) and paired-bootstrap 95% confidence intervals.
+- Reports are written to `recommendations/reports/evaluation_report.md` and `.json`.
+
+> **Why the evaluation was rebuilt.** The earlier version used the first product a shopper viewed in
+> a visit as the query and counted a candidate as correct only if bought later that day. The viewed
+> product was usually the one bought, but it is excluded from the candidates, so almost no
+> candidate list contained a correct answer and the metrics measured almost nothing.
+
+## Results (default dataset)
+
+<!-- EVAL:START -->
+*Generated from `recommendations/reports/evaluation_report.json`; full detail in [`evaluation_report.md`](../recommendations/reports/evaluation_report.md).*
+
+End-to-end NDCG@10 (every held-out order with a new product; a bought product missing from the candidate list counts as a miss), and the share of the random → oracle gap each ordering captures:
+
+| Ordering | All (5,647) | First-time buyers (1,521) | Repeat buyers (4,126) | Ranking-only, all | Share of achievable gain |
+|---|---|---|---|---|---|
+| Random order | 0.0062 | 0.0038 | 0.0071 | 0.033 | – |
+| Popularity | 0.0164 | 0.0226 | 0.0142 | 0.086 | 26% (19% to 33%) |
+| Retrieval score (previous production) | 0.0239 | 0.0104 | 0.0289 | 0.127 | 45% (37% to 54%) |
+| New ranker (11 features) | 0.0384 | 0.0248 | 0.0434 | 0.203 | 82% (72% to 93%) |
+| Ranker blend (all customers) | 0.0386 | 0.0253 | 0.0435 | 0.205 | 83% (73% to 94%) |
+| **Segment-aware (served)** | 0.0386 | 0.0253 | 0.0435 | 0.205 | 83% (73% to 94%) |
+| Oracle (true taste, not deployable) | 0.0452 | 0.0380 | 0.0478 | 0.249 | – |
+
+Paired bootstrap over orders (end-to-end NDCG@10):
+
+- new ranker vs retrieval: +0.0145 (95% CI +0.0118 to +0.0171, significant)
+- new ranker vs popularity: +0.0219 (95% CI +0.0187 to +0.0251, significant)
+- new ranker vs random: +0.0321 (95% CI +0.0281 to +0.0359, significant)
+- segment aware vs retrieval: +0.0147 (95% CI +0.0122 to +0.0172, significant)
+- segment aware vs popularity: +0.0221 (95% CI +0.0190 to +0.0253, significant)
+- segment aware vs production blend: +0.0000 (95% CI +0.0000 to +0.0000, not significant)
+
+Retrieval (is a bought product in the candidate list at all?). Per-source figures use each source's full list; the combined candidate list takes a quota from each source (collaborative 80, content 17, fbt 17, trending 17, recent_activity 17) and then fills by score, so one source alone can exceed the combined figure:
+
+- collaborative: 14.4% of test orders
+- trending: 6.3% of test orders
+- recent_activity: 6.2% of test orders
+- content: 4.5% of test orders
+- fbt: 2.6% of test orders
+- all sources combined (candidate list of up to 150): 20.4%; **retrieval ceiling** (top 150 of all eligible products by true taste): 46.2%
+
+Order counts: 5,831 paid orders in the test period. 25 came from customers with no earlier activity (cold start); they stay in and are scored with documented default features. 184 only re-bought earlier products (excluded from candidates), leaving 5,647 for the end-to-end tables. 1,191 had a bought product in the list; ranking-only tables also need at least 10 candidates and one not-bought candidate (0 + 0 dropped), leaving 1,191.
+
+Policy settings (chosen on the validation period by `python -m recommendations.tune_policy`): pool of 150, quotas collaborative 80, content 17, fbt 17, trending 17, recent_activity 17, ranker weight 0.75 in the blend with the retrieval score, first-time buyers get the same ranker blend, trending window 30 days.
+
+**Leave-one-source-out ablation (test period).**
+
+Each row rebuilds the candidate lists without one source, retrains the ranker without it on period B and scores the served policy on the same test orders. The interval is the paired-bootstrap 95% CI of the change in NDCG@10 versus the full system.
+
+| Without | Pool recall | Served NDCG@10 | Change vs full (95% CI) |
+|---|---|---|---|
+| (nothing: full system) | 0.1667 | 0.0386 | – |
+| collaborative | 0.1153 | 0.0294 | -0.0092 (-0.0119 to -0.0066) |
+| content | 0.1609 | 0.0384 | -0.0001 (-0.0015 to +0.0012) |
+| fbt | 0.1655 | 0.0376 | -0.0010 (-0.0023 to +0.0003) |
+| trending | 0.1609 | 0.0340 | -0.0045 (-0.0062 to -0.0030) |
+| recent_activity | 0.1596 | 0.0400 | +0.0014 (+0.0002 to +0.0026) |
+
+**Recall acceptance check (passed):** combined candidate list recall 0.1667 vs 0.1178 for the best single source (collaborative, its own top list of the same size).
+
+Ranker features with the most gain: `n_sources` (23%), `retrieval_score` (21%), `log_product_popularity` (12%), `log_price_ratio` (12%), `source_id` (10%).
+
+ALS tuning (`python -m recommendations.tune_als`, chosen on the validation period with a 7-day embargo, checked once on the test period): 32 factors, regularisation 0.1, weights (view, cart, purchase) (1, 3, 5); held-out Recall@20 0.0900 with the previous serving settings → 0.0900. Serving and evaluation read these settings from `als_tuning.json`. Full grid: [`als_tuning.md`](../recommendations/reports/als_tuning.md).
+<!-- EVAL:END -->
+
+To reproduce: generate with `PANTREE_TODAY=2026-06-30`, then run `python -m recommendations.tune_als`,
+`python -m recommendations.evaluate` and `python -m recommendations.readme_summary` (which rewrites the
+generated blocks in this README). Absolute numbers are low because the task is predicting
+the exact product out of 10,000; compare orderings with each other, not with published benchmarks.
 
 ## What counts as a purchase
 
