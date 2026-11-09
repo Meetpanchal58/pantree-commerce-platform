@@ -140,16 +140,18 @@ class ColdStartOrderTests(unittest.TestCase):
         ])
 
         class FakeHistory:
-            def profile_history(self, cid, ts):
+            def viewed_before(self, cid, ts):
                 return ["p1"] if cid == "c1" else []
 
             def bought_list(self, cid, ts):
                 return []
 
-        class FakeRetrieval:
-            popularity = pd.Series({"p1": 3, "p2": 1})
+        class FakeSources:
+            @staticmethod
+            def popularity(ts):
+                return pd.Series({"p1": 3, "p2": 1})
 
-        out = evaluate.add_features(pools, FakeRetrieval(), FakeHistory(), products)
+        out = evaluate.add_features(pools, FakeSources(), FakeHistory(), products)
         self.assertEqual(set(out["session_id"]), {"warm", "cold"})
         cold = out[out["session_id"] == "cold"].iloc[0]
         self.assertEqual(cold["category_affinity"], 0.0)

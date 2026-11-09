@@ -6,8 +6,11 @@ Time is split into three periods so nothing is learned from the future:
     retrieval models   ranker trained on   everything is
     learn from here    candidate lists     scored here
 
-* Retrieval sources (ALS, co-purchases, trending, recent activity) only use
-  data before each period's cut-off (with a 7-day gap so labels never overlap).
+* Candidate lists and the final ordering come from ``recommendations/policy.py``,
+  the code the storefront serves. Model-like sources (ALS, co-purchases) only use
+  data before each period's cut-off (with a 7-day gap so labels never overlap);
+  trending, recent activity, product popularity and stock are taken as of each
+  query time.
 * Each query is a real order: "given everything before this order, does the
   system rank the products the customer actually bought?" (the job of the
   home-page "Recommended for you" row). The query time is one hour before the
@@ -25,7 +28,6 @@ import json
 from bisect import bisect_left, bisect_right
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
-from itertools import combinations
 from pathlib import Path
 import sys
 
@@ -37,9 +39,17 @@ sys.path.insert(0, str(ROOT))
 
 from recommendations.candidates.common import (  # noqa: E402
     DATA,
-    gender_is_compatible,
     read_products,
     read_realized_transactions,
+)
+from recommendations.policy import (  # noqa: E402  (the served policy)
+    PER_SOURCE as POOL_PER_SOURCE,
+    POOL_SIZE,
+    CustomerState,
+    Sources,
+    blend,
+    build_candidates,
+    final_scores,
 )
 from recommendations.oracle import (  # noqa: E402  (evaluation-only ground truth)
     gap_closed_bootstrap,
@@ -59,8 +69,6 @@ from recommendations.ranker import (  # noqa: E402
 
 REPORT_DIR = Path(__file__).with_name("reports")
 EMBARGO = pd.Timedelta(days=7)
-POOL_PER_SOURCE = 20
-POOL_SIZE = 100
 MIN_POOL = 10
 QUERY_OFFSET = pd.Timedelta(hours=1)
 
@@ -170,81 +178,13 @@ class History:
         return i < len(times) and times[i] <= ts + EMBARGO and times[i].normalize() == ts.normalize()
 
 
-class Retrieval:
-    """Candidate sources that only use information before ``cutoff``."""
-
-    def __init__(self, cutoff, activity, transactions, products, use_content=True):
-        from recommendations.candidates import collaborative
-
-        self.cutoff = cutoff
-        self.products = products
-        self.collaborative = collaborative
-        past = activity[activity["event_timestamp"] < cutoff]
-        self.popularity = past.groupby("product_id").size().sort_values(ascending=False, kind="mergesort")
-        top = self.popularity.head(100)
-        peak = float(top.max()) if len(top) else 1.0
-        self.trending = [
-            {"product_id": pid, "score": float(n / peak), "source": "trending"} for pid, n in top.items()
-        ]
-        prior = transactions[transactions["order_timestamp"] < cutoff]
-        self.co_purchases = defaultdict(Counter)
-        for pids in prior.groupby("order_id")["product_id"].unique():
-            for a, b in combinations(sorted(pids), 2):
-                self.co_purchases[a][b] += 1
-                self.co_purchases[b][a] += 1
-        self.by_type = {cat: g.index.to_numpy() for cat, g in products.groupby("h3_category")}
-        self.use_content = use_content
-        if use_content:
-            from recommendations.candidates.content import warm_index
-
-            warm_index()
-        self._als, self._content = {}, {}
-
-    def als(self, cid):
-        if cid not in self._als:
-            self._als[cid] = self.collaborative.get_collaborative(cid, limit=100, as_of=self.cutoff)
-        return self._als[cid]
-
-    def content(self, pid):
-        if not self.use_content:
-            return []
-        if pid not in self._content:
-            from recommendations.candidates.content import get_similar_products
-
-            self._content[pid] = get_similar_products(pid, limit=50)
-        return self._content[pid]
-
-    def fbt(self, pid):
-        pairs = self.co_purchases.get(pid, Counter())
-        peak = max(pairs.values(), default=0)
-        return [
-            {"product_id": p, "score": n / peak if peak else 0.0, "source": "fbt"}
-            for p, n in pairs.most_common(50)
-        ]
-
-    def recent_activity(self, seeds):
-        """Same product type and audience as the customer's recent items (mirrors serving)."""
-        out = {}
-        peak = float(self.popularity.max()) if len(self.popularity) else 1.0
-        for seed in seeds[:5]:
-            if seed not in self.products.index:
-                continue
-            seed_row = self.products.loc[seed]
-            pool = [p for p in self.by_type.get(seed_row["h3_category"], []) if p != seed]
-            pool = [
-                p for p in pool
-                if gender_is_compatible(seed_row["gender"], self.products.at[p, "gender"])
-            ]
-            scored = sorted(pool, key=lambda p: (-self.popularity.get(p, 0), p))[:20]
-            for p in scored:
-                score = 0.80 + 0.10 * self.popularity.get(p, 0) / peak
-                if score > out.get(p, {"score": -1})["score"]:
-                    out[p] = {"product_id": p, "score": score, "source": "recent_activity"}
-        return sorted(out.values(), key=lambda c: (-c["score"], c["product_id"]))
+def customer_state(history: History, cid, ts) -> CustomerState:
+    """What serving would know about the customer at ``ts``."""
+    return CustomerState(cid, history.bought_list(cid, ts), history.viewed_before(cid, ts))
 
 
-def build_pools(queries, retrieval: Retrieval, history: History) -> tuple[pd.DataFrame, dict]:
-    """Candidate list per order + per-source hit statistics.
+def build_pools(queries, sources: Sources, history: History) -> tuple[pd.DataFrame, dict]:
+    """Candidate list per order (the served policy's builder) + per-source hit statistics.
 
     ``queries`` has one row per order: customer_id, query_time, purchased (set).
     """
@@ -253,53 +193,24 @@ def build_pools(queries, retrieval: Retrieval, history: History) -> tuple[pd.Dat
     pool_hits = 0
     for q in queries.itertuples(index=False):
         cid, ts, purchased = q.customer_id, q.query_time, q.purchased
-        bought = history.bought_list(cid, ts)
-        seen = history.viewed_before(cid, ts)
-        anchor = bought[0] if bought else (seen[0] if seen else None)
-        sources = {
-            "collaborative": retrieval.als(cid),
-            "content": retrieval.content(anchor) if anchor else [],
-            "fbt": retrieval.fbt(anchor) if anchor else [],
-            "trending": retrieval.trending,
-            "recent_activity": retrieval.recent_activity(bought[:3] + seen[:2]),
-        }
-        excluded = set(bought)
-        best, origin = {}, defaultdict(set)
-        for name, items in sources.items():
-            if any(c["product_id"] in purchased for c in items if c["product_id"] not in excluded):
+        state = customer_state(history, cid, ts)
+        pool, lists = build_candidates(state, sources, as_of=ts)
+        for name, items in lists.items():
+            if any(c["product_id"] in purchased for c in items):
                 source_hits[name] += 1
-            for c in items:
-                pid = c["product_id"]
-                if pid in excluded:
-                    continue
-                origin[pid].add(name)
-                if c["score"] > best.get(pid, {"score": -1})["score"]:
-                    best[pid] = {**c, "source": name}
-        selected = {}
-        for name, items in sources.items():
-            taken = 0
-            for c in items:
-                pid = c["product_id"]
-                if pid in best and pid not in selected:
-                    selected[pid] = best[pid]
-                    taken += 1
-                if taken == POOL_PER_SOURCE or len(selected) == POOL_SIZE:
-                    break
-        for c in sorted(best.values(), key=lambda c: (-c["score"], c["product_id"])):
-            if len(selected) >= POOL_SIZE:
-                break
-            selected.setdefault(c["product_id"], c)
+        excluded = set(state.bought)
         hit = False
-        for pid, c in selected.items():
-            label = int(pid in purchased)
+        for c in pool:
+            label = int(c["product_id"] in purchased)
             hit = hit or bool(label)
             rows.append({
-                "session_id": q.order_id, "customer_id": cid, "anchor": anchor,
-                "event_timestamp": ts, "product_id": pid, "source": c["source"],
-                "retrieval_score": float(c["score"]), "score": float(c["score"]),
-                "n_sources": len(origin[pid]), "label": label,
+                "session_id": q.order_id, "customer_id": cid, "anchor": state.anchor,
+                "event_timestamp": ts, "product_id": c["product_id"], "source": c["source"],
+                "retrieval_score": float(c["retrieval_score"]), "score": float(c["retrieval_score"]),
+                "n_sources": c["n_sources"], "label": label,
                 "customer_event_count": q.customer_event_count, "surface_id": 0,
                 "n_purchased": len(purchased - excluded),
+                "first_timer": state.first_timer,
             })
         pool_hits += int(hit)
     stats = {
@@ -327,7 +238,8 @@ def order_queries(transactions, activity, start, end) -> pd.DataFrame:
     return grouped.sort_values("query_time").reset_index(drop=True)
 
 
-def add_features(pools, retrieval: Retrieval, history: History, products) -> pd.DataFrame:
+def add_features(pools, sources: Sources, history: History, products) -> pd.DataFrame:
+    """Ranker features per candidate, with product popularity as of the query time."""
     parts = []
     # dropna=False keeps cold-start orders (no earlier activity, so no anchor); their
     # features take the documented empty-history defaults in ranker.candidate_features.
@@ -335,13 +247,13 @@ def add_features(pools, retrieval: Retrieval, history: History, products) -> pd.
         ["session_id", "customer_id", "anchor", "event_timestamp"], sort=False, dropna=False
     ):
         anchor = anchor if isinstance(anchor, str) else None
-        profile = customer_profile(
-            history.profile_history(cid, ts), products, purchase_count=len(history.bought_list(cid, ts))
-        )
-        parts.append(candidate_features(group, products, profile, retrieval.popularity, anchor))
-    out = pd.concat(parts, ignore_index=True)
-    out["product_event_count"] = out["product_id"].map(retrieval.popularity).fillna(0)
-    return out
+        state = customer_state(history, cid, ts)
+        counts = sources.popularity(ts)
+        profile = customer_profile(state.history, products, purchase_count=len(state.bought))
+        featured = candidate_features(group, products, profile, counts, anchor)
+        featured["product_event_count"] = featured["product_id"].map(counts).fillna(0).to_numpy()
+        parts.append(featured)
+    return pd.concat(parts, ignore_index=True)
 
 
 def rankable(frame: pd.DataFrame) -> pd.DataFrame:
@@ -367,13 +279,17 @@ def main(sample_limit: int = 400000, use_content: bool = True) -> dict:
     print(f"Periods: ranker orders {t_rank:%Y-%m-%d}..{t_test - EMBARGO:%Y-%m-%d} "
           f"({len(queries_b):,}), test orders {t_test:%Y-%m-%d}..{t_end:%Y-%m-%d} ({len(queries_c):,})")
 
-    retrieval_b = Retrieval(t_rank - EMBARGO, activity, transactions, products, use_content)
-    pools_b, _ = build_pools(queries_b, retrieval_b, history)
-    train_b = add_features(pools_b, retrieval_b, history, products)
+    if use_content:
+        from recommendations.candidates.content import warm_index
 
-    retrieval_c = Retrieval(t_test - EMBARGO, activity, transactions, products, use_content)
-    pools_c, retrieval_stats = build_pools(queries_c, retrieval_c, history)
-    test_c = add_features(pools_c, retrieval_c, history, products)
+        warm_index()
+    sources_b = Sources(model_as_of=t_rank - EMBARGO, use_content=use_content)
+    pools_b, _ = build_pools(queries_b, sources_b, history)
+    train_b = add_features(pools_b, sources_b, history, products)
+
+    sources_c = Sources(model_as_of=t_test - EMBARGO, use_content=use_content)
+    pools_c, retrieval_stats = build_pools(queries_c, sources_c, history)
+    test_c = add_features(pools_c, sources_c, history, products)
 
     model = train_ranker(train_b, FEATURES)
     legacy_train = frame[frame["event_timestamp"] < t_rank - EMBARGO]
@@ -391,20 +307,25 @@ def main(sample_limit: int = 400000, use_content: bool = True) -> dict:
     if model is not None:
         raw = model.predict(np.ascontiguousarray(test_all[FEATURES].to_numpy(dtype=np.float32)))
         test_all["new_ranker"] = raw
-        # Production blend: 0.5 retrieval + 0.5 min-max ranker, per list.
-        norm = test_all.assign(raw=raw).groupby("session_id")["raw"].transform(
-            lambda s: (s - s.min()) / (s.max() - s.min()) if s.max() > s.min() else 0.5
-        )
-        test_all["production_blend"] = 0.5 * test_all["retrieval_score"] + 0.5 * norm
+        # Ranker blend for everyone (the served policy uses it for returning customers).
+        test_all["production_blend"] = 0.0
+        for _, idx in test_all.groupby("session_id", sort=False).indices.items():
+            test_all.iloc[idx, test_all.columns.get_loc("production_blend")] = blend(
+                test_all["retrieval_score"].to_numpy()[idx], raw[idx]
+            )
         orderings += ["new_ranker", "production_blend"]
-    # Segment-aware policy: popularity for customers with no purchase history,
-    # the production blend for everyone else.
-    first_flag = test_all["log_customer_purchases"].eq(0)
-    base_col = "production_blend" if "production_blend" in test_all else "retrieval"
-    pop_norm = test_all.groupby("session_id")["product_event_count"].transform(
-        lambda s: s / s.max() if s.max() > 0 else 0.0
-    )
-    test_all["segment_aware"] = np.where(first_flag, 1.0 + pop_norm, test_all[base_col])
+    # The served policy (policy.final_scores): popularity order for customers with
+    # no purchases, the ranker blend for everyone else. Same function as serving.
+    test_all["segment_aware"] = 0.0
+    col = test_all.columns.get_loc("segment_aware")
+    retrieval_arr = test_all["retrieval_score"].to_numpy()
+    pop_arr = test_all["product_event_count"].to_numpy(dtype=float)
+    first_arr = test_all["first_timer"].to_numpy()
+    for _, idx in test_all.groupby("session_id", sort=False).indices.items():
+        test_all.iloc[idx, col] = final_scores(
+            retrieval_arr[idx], pop_arr[idx], bool(first_arr[idx][0]),
+            None if model is None else test_all["new_ranker"].to_numpy()[idx],
+        )
     orderings.append("segment_aware")
     # Oracle: rank by the simulator's true taste function (a ceiling, not deployable).
     profiles, taste_catalog, catalog_median = load_taste_inputs()
@@ -593,7 +514,10 @@ def write_report(report: dict) -> None:
              "**Question asked:** for each real order in the held-out period, given everything known one hour before it, "
              "does the system rank the products the customer actually bought near the top?", "",
              f"Test orders: {st['test_orders']:,}. Candidate list: up to {st['pool_size']} products "
-             f"({st['per_source']} per source, then filled by score). Products the customer already bought are excluded.", ""]
+             f"({st['per_source']} per source, then filled by score). Products the customer already bought, and products "
+             "that were out of stock, not yet launched or discontinued at the query time, are excluded. The candidate "
+             "list and the segment-aware ordering come from `recommendations/policy.py`, the same code the storefront "
+             "serves.", ""]
     r = report["retrieval"]
     lines += ["## 1. Retrieval: is the right product in the list at all?", "",
               f"{r['pool_contains_purchase']:,} of {r['queries']:,} test orders ({(r['pool_coverage'] or 0):.1%}) "

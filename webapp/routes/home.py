@@ -144,8 +144,9 @@ async def recommendations_api(surface: str, request: Request, sid: str = Cookie(
     context["purchased_product_ids"] = [
         row["product_id"]
         for row in con.execute(
-            "SELECT DISTINCT product_id FROM transactions "
-            "WHERE customer_id=? AND product_id IS NOT NULL AND " + purchase_sql(),
+            "SELECT product_id FROM transactions "
+            "WHERE customer_id=? AND product_id IS NOT NULL AND " + purchase_sql()
+            + " GROUP BY product_id ORDER BY MAX(order_timestamp) DESC",  # newest first
             (customer_id,),
         ).fetchall()
     ]

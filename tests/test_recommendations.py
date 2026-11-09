@@ -24,22 +24,22 @@ class RecommendationSafetyTests(unittest.TestCase):
         )
         common.read_clickstream_activity.cache_clear()
         common.read_event_counts.cache_clear()
-        popularity._activity_events.cache_clear()
-        popularity._recent_product_scores.cache_clear()
+        popularity.activity_index.cache_clear()
+        popularity.activity_counts.cache_clear()
         try:
             with patch.object(common.pd, "read_parquet", return_value=events) as read:
-                activity = popularity._activity_events()
+                activity = popularity.activity_counts(None)
                 customer_counts, product_counts = common.read_event_counts()
 
             read.assert_called_once()
-            self.assertEqual(activity["product_id"].tolist(), ["product-1", "product-2"])
+            self.assertEqual(activity.to_dict(), {"product-1": 1, "product-2": 1})
             self.assertEqual(customer_counts.to_dict(), {"customer-1": 2})
             self.assertEqual(product_counts.to_dict(), {"product-1": 1, "product-2": 1})
         finally:
             common.read_clickstream_activity.cache_clear()
             common.read_event_counts.cache_clear()
-            popularity._activity_events.cache_clear()
-            popularity._recent_product_scores.cache_clear()
+            popularity.activity_index.cache_clear()
+            popularity.activity_counts.cache_clear()
 
     def test_stock_reader_keeps_latest_row_and_handles_missing_dates(self):
         from recommendations.candidates import common
@@ -210,39 +210,28 @@ class RecommendationSafetyTests(unittest.TestCase):
         )
         self.assertTrue(all(item["source"] == "similar_fallback" for item in candidates))
 
-    def test_live_activity_seed_uses_same_audience_products(self):
+    def test_recent_activity_seed_uses_same_audience_products(self):
         products = pd.DataFrame(
             [
-                ("seed", "Night suits", "Men", "Viewed lounge set", 100, 100, 100),
-                ("men-item", "Night suits", "Men", "Men's lounge set", 200, 200, 20),
-                ("unisex-item", "Night suits", "Unisex", "Unisex lounge set", 180, 180, 15),
-                ("women-item", "Night suits", "Women", "Women's lounge set", 150, 100, 500),
+                ("seed", "Night suits", "Men", "Viewed lounge set"),
+                ("men-item", "Night suits", "Men", "Men's lounge set"),
+                ("unisex-item", "Night suits", "Unisex", "Unisex lounge set"),
+                ("women-item", "Night suits", "Women", "Women's lounge set"),
             ],
-            columns=[
-                "product_id", "h3_category", "gender", "product_name",
-                "mrp", "current_price", "review_count",
-            ],
+            columns=["product_id", "h3_category", "gender", "product_name"],
         ).set_index("product_id", drop=False)
-        empty_events = pd.DataFrame(
-            columns=["customer_id", "product_id", "event_type", "event_timestamp", "weight"]
-        )
-        recent_scores = pd.Series(
-            {"men-item": 10.0, "unisex-item": 5.0, "women-item": 100.0}
-        )
+        counts = pd.Series({"men-item": 10, "unisex-item": 5, "women-item": 100})
+        popularity.clear_caches()
+        self.addCleanup(popularity.clear_caches)
         with (
-            patch.object(popularity, "_activity_events", return_value=empty_events),
-            patch.object(popularity, "_recent_product_scores", return_value=recent_scores),
+            patch.object(popularity, "activity_counts", return_value=counts),
             patch.object(popularity, "read_products", return_value=products),
         ):
-            candidates = popularity.get_personalized(
-                "new-customer", recent_product_ids=["seed"]
-            )
+            candidates = popularity.recent_activity(["seed"], as_of=None)
 
-        self.assertEqual(
-            {item["product_id"] for item in candidates},
-            {"men-item", "unisex-item"},
-        )
+        self.assertEqual([item["product_id"] for item in candidates], ["men-item", "unisex-item"])
         self.assertTrue(all(item["source"] == "recent_activity" for item in candidates))
+        self.assertAlmostEqual(candidates[0]["score"], 0.80 + 0.10 * 10 / 100)
 
     def test_cold_als_lookup_does_not_train_inside_the_request(self):
         with (

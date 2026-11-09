@@ -10,6 +10,7 @@ from typing import Any
 
 import pandas as pd
 
+from . import policy
 from .candidates import collaborative, content, fbt, fusion, popularity
 from .candidates.common import (
     customer_histories,
@@ -24,6 +25,8 @@ from .candidates.common import (
 from .ranker import customer_profile, model_uses_current_features, score_candidates
 
 logger = logging.getLogger("recommendations")
+PERSONALIZED_TOP_K = 30
+HISTORY_LIMIT = 200  # viewed products used for the profile (matches customer_histories)
 
 
 def _context_product_ids(context: dict[str, Any]) -> list[str]:
@@ -101,24 +104,6 @@ def _get_popular(limit: int = 100, **_: Any) -> list[dict]:
     return popularity.get_popular(limit=limit)
 
 
-def _get_personalized(
-    customer_id: str | None = None,
-    limit: int = 100,
-    context: dict[str, Any] | None = None,
-    **_: Any,
-) -> list[dict]:
-    recent_product_ids = (context or {}).get("recent_product_ids", [])
-    if not isinstance(recent_product_ids, list):
-        recent_product_ids = []
-    return (
-        popularity.get_personalized(
-            customer_id, limit=limit, recent_product_ids=recent_product_ids
-        )
-        if customer_id
-        else []
-    )
-
-
 def _get_deals(limit: int = 100, **_: Any) -> list[dict]:
     return popularity.get_deals(limit=limit)
 
@@ -131,15 +116,11 @@ SURFACE_CONFIG: dict[str, dict[str, Any]] = {
     "homepage": {
         "candidate_sources": [
             ("collaborative", _get_collaborative, 100),
-            ("personalized", _get_personalized, 100),
             ("content", _get_content, 100),
             ("popularity", _get_popular, 100),
         ],
         "fusion_weights": {
             "collaborative": 0.40,
-            "recent_activity": 0.75,
-            "deals_on_viewed": 0.75,
-            "personalized": 0.75,
             "content": 0.25,
             "popularity": 0.35,
             "trending": 0.35,
@@ -243,7 +224,6 @@ SUB_SURFACES: dict[str, dict[str, Any]] = {
         "label": "Just For You",
         "candidate_sources": [
             ("collaborative", _get_collaborative, 100),
-            ("personalized", _get_personalized, 100),
         ],
         "fusion_weights": {
             "collaborative": 1.0,
@@ -359,14 +339,66 @@ def _catalog() -> pd.DataFrame:
     return read_products()
 
 
-def _has_purchase_history(customer_id: str | None, context: dict[str, Any]) -> bool:
-    """True if the customer bought anything (live orders or warehouse history)."""
-    if context.get("purchased_product_ids"):
-        return True
-    if not customer_id or read_realized_transactions.cache_info().currsize == 0:
-        return False
-    transactions = read_realized_transactions()
-    return bool((transactions["customer_id"] == customer_id).any())
+def _id_list(values) -> list[str]:
+    if not isinstance(values, (list, tuple)):
+        return []
+    return [str(value) for value in values if value]
+
+
+def customer_state(customer_id: str | None, context: dict[str, Any]) -> policy.CustomerState:
+    """Purchases and viewed products, newest first: live store rows, then warehouse."""
+    stored = (
+        customer_histories().get(customer_id, {})
+        if customer_id and customer_histories_ready()
+        else {}
+    )
+    bought = list(dict.fromkeys(_id_list(context.get("purchased_product_ids")) + stored.get("bought", [])))
+    viewed = list(dict.fromkeys(_id_list(context.get("recent_product_ids")) + stored.get("viewed", [])))
+    return policy.CustomerState(customer_id, bought, viewed[:HISTORY_LIMIT])
+
+
+def _personalized(customer_id: str | None, context: dict[str, Any]) -> list[dict[str, Any]]:
+    """The "Recommended for you" row: the shared policy that the evaluation scores."""
+    limit = int(context.get("limit", PERSONALIZED_TOP_K))
+    if limit < 1:
+        raise ValueError("Recommendation limit must be positive")
+    catalog = _catalog()
+    segment = "first_order"
+    if not popularity.activity_ready():
+        # Warm-up only: activity counts are still loading in the background.
+        logger.info("[homepage] activity warming; serving the catalog fallback")
+        pool = popularity.get_popular(limit=limit)
+        ranked = sorted(pool, key=lambda item: (-item["score"], item["product_id"]))
+    else:
+        state = customer_state(customer_id, context)
+        sources = policy.Sources(model_as_of=None, use_content=heavy_models_enabled())
+        exclude = _excluded_product_ids(context) | set(_context_product_ids(context))
+        pool, _ = policy.build_candidates(state, sources, as_of=None, exclude=exclude)
+        model = _load_ranker() if context.get("use_ranker", True) else None  # False: A/B control
+        ranked = policy.rank(state, pool, sources, as_of=None, model=model, products=catalog)
+        segment = "first_order" if state.first_timer else "repeat"
+    results = []
+    for item in ranked:
+        if item["product_id"] not in catalog.index:
+            continue
+        product = catalog.loc[item["product_id"]]
+        results.append({
+            **item,
+            "retrieval_score": float(item.get("retrieval_score", item["score"])),
+            "name": product["product_name"],
+            "image_url": product["image_url"],
+            "category": product["h3_category"],
+            "brand_name": product["brand_name"],
+            "current_price": product["current_price"],
+            "segment": segment,
+        })
+        if len(results) >= min(limit, PERSONALIZED_TOP_K):
+            break
+    logger.info(
+        "[homepage] personalized result_count=%d sources=%s",
+        len(results), sorted({item.get("source", "unknown") for item in results}),
+    )
+    return results
 
 
 def _exclude_purchased(
@@ -694,28 +726,7 @@ def recommend(
     product_id = context.get("product_id")
     intent = context.get("intent")
     if surface == "homepage" and intent == "personalized":
-        config = {
-            **config,
-            "candidate_sources": [
-                ("collaborative", _get_collaborative, 100),
-                ("personalized", _get_personalized, 100),
-            ],
-            "fusion_weights": {
-                "collaborative": 1.0,
-                "recent_activity": 1.1,
-                "deals_on_viewed": 1.1,
-                "personalized": 1.1,
-            },
-        }
-        if not _has_purchase_history(customer_id, context):
-            # Segment-aware policy: in the offline evaluation, popularity ranked
-            # first-time buyers' purchases far better than personal signals, so
-            # customers without purchases see trending items first (personal
-            # items still fill the rest of the row).
-            config["candidate_sources"] = config["candidate_sources"] + [
-                ("trending", _get_popular, 100)
-            ]
-            config["fusion_weights"] = {**config["fusion_weights"], "trending": 1.5}
+        return _personalized(customer_id, context)
     elif surface == "homepage" and intent == "trending":
         config = {
             **config,

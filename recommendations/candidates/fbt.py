@@ -173,6 +173,12 @@ def _order_pair_candidates(product_ids, exclude, limit, as_of=None) -> list[dict
     )
 
 
+def co_purchase(product_id: str, as_of=None, limit: int = 50) -> list[dict]:
+    """Products bought in the same orders as ``product_id`` before ``as_of``
+    (the "fbt" source of the personalised row; no eligibility filtering)."""
+    return _order_pair_candidates([product_id], {product_id}, limit, as_of=as_of)
+
+
 def _session_pair_candidates(product_ids, exclude, limit, as_of=None) -> list[dict]:
     return _pair_candidates(
         co_view_pairs(_key(as_of)), product_ids, exclude, limit, "session_pairing", "Often viewed together"
