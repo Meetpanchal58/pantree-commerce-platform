@@ -23,7 +23,7 @@ START, END = "<!-- RESULTS:START -->", "<!-- RESULTS:END -->"
 NAMES = {
     "random": "Random order", "popularity": "Popularity", "retrieval": "Retrieval score (previous production)",
     "new_ranker": "New ranker (11 features)",
-    "production_blend": "Production blend (50/50)", "segment_aware": "**Segment-aware (served)**",
+    "production_blend": "Ranker blend (all customers)", "segment_aware": "**Segment-aware (served)**",
     "oracle": "Oracle (true taste, not deployable)",
 }
 
@@ -98,10 +98,11 @@ def build_eval(report: dict) -> str:
         verdict = "significant" if c["ci_low"] > 0 or c["ci_high"] < 0 else "not significant"
         lines.append(f"- {name.replace('_vs_', ' vs ').replace('_', ' ')}: {c['mean_diff']:+.4f} "
                      f"(95% CI {c['ci_low']:+.4f} to {c['ci_high']:+.4f}, {verdict})")
+    quotas = report["settings"]["per_source"]
+    quota_str = ", ".join(f"{k} {v}" for k, v in quotas.items()) if isinstance(quotas, dict) else f"{quotas} each"
     lines += ["", "Retrieval (is a bought product in the candidate list at all?). Per-source figures use each source's "
-              f"full list; the combined candidate list keeps only {report['settings']['per_source']} per source, which is "
-              "why one source alone can exceed the combined figure (and why keeping more ALS candidates is a cheap "
-              "retrieval improvement to try):", ""]
+              f"full list; the combined candidate list takes a quota from each source ({quota_str}) and then fills "
+              "by score, so one source alone can exceed the combined figure:", ""]
     for name, hits in sorted(ret["source_hits"].items(), key=lambda x: -x[1]):
         lines.append(f"- {name}: {hits / ret['queries']:.1%} of test orders")
     lines += [
@@ -118,6 +119,12 @@ def build_eval(report: dict) -> str:
         f"({oc['dropped_list_under_min_pool']:,} + {oc['dropped_list_all_purchased']:,} dropped), leaving "
         f"{oc['ranking_only_orders']:,}.",
     ]
+    from recommendations.evaluate import ablation_lines, policy_text  # same wording as the report
+
+    if report["settings"].get("policy"):
+        lines += ["", policy_text(report["settings"])]
+    lines += [line.replace("## Leave-one-source-out ablation (test period)", "**Leave-one-source-out ablation (test period).**")
+              for line in ablation_lines(report)]
     if report.get("feature_importance"):
         top = list(report["feature_importance"].items())[:5]
         lines += ["", "Ranker features with the most gain: " + ", ".join(f"`{f}` ({v:.0%})" for f, v in top) + "."]

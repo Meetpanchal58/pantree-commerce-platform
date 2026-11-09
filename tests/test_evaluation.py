@@ -154,11 +154,9 @@ class SegmentAwarePolicyTests(unittest.TestCase):
         lists["trending"] = [{"product_id": f"t{i}", "score": 0.5 - i / 100} for i in range(30)]
         lists["content"] = [{"product_id": "a0", "score": 0.2}]
         state = policy.CustomerState("c", bought=["t0"], viewed=[])
-        with (
-            patch.object(policy, "POOL_SIZE", 45),
-            patch.object(policy, "available", side_effect=lambda pids, as_of: [True] * len(pids)),
-        ):
-            pool, _ = policy.build_candidates(state, sources=None, lists=lists)
+        config = policy.PolicyConfig(pool_size=45)
+        with patch.object(policy, "available", side_effect=lambda pids, as_of: [True] * len(pids)):
+            pool, _ = policy.build_candidates(state, sources=None, lists=lists, config=config)
         ids = [c["product_id"] for c in pool]
         self.assertNotIn("t0", ids)  # already bought
         self.assertEqual(ids[:20], [f"a{i}" for i in range(20)])  # collaborative quota
