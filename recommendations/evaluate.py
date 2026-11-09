@@ -41,7 +41,12 @@ from recommendations.candidates.common import (  # noqa: E402
     read_products,
     read_realized_transactions,
 )
-from generators.taste import product_demand_multiplier, true_taste_score  # noqa: E402
+from recommendations.oracle import (  # noqa: E402  (evaluation-only ground truth)
+    gap_closed_bootstrap,
+    load_taste_inputs,
+    oracle_scores,
+    retrieval_ceiling,
+)
 from recommendations.ranker import (  # noqa: E402
     FEATURES,
     LEGACY_FEATURES,
@@ -324,9 +329,12 @@ def order_queries(transactions, activity, start, end) -> pd.DataFrame:
 
 def add_features(pools, retrieval: Retrieval, history: History, products) -> pd.DataFrame:
     parts = []
+    # dropna=False keeps cold-start orders (no earlier activity, so no anchor); their
+    # features take the documented empty-history defaults in ranker.candidate_features.
     for (_, cid, anchor, ts), group in pools.groupby(
-        ["session_id", "customer_id", "anchor", "event_timestamp"], sort=False
+        ["session_id", "customer_id", "anchor", "event_timestamp"], sort=False, dropna=False
     ):
+        anchor = anchor if isinstance(anchor, str) else None
         profile = customer_profile(
             history.profile_history(cid, ts), products, purchase_count=len(history.bought_list(cid, ts))
         )
@@ -340,121 +348,6 @@ def rankable(frame: pd.DataFrame) -> pd.DataFrame:
     stats = frame.groupby("session_id")["label"].agg(["size", "nunique"])
     keep = stats[(stats["size"] >= MIN_POOL) & (stats["nunique"] > 1)].index
     return frame[frame["session_id"].isin(keep)].copy()
-
-
-# --------------------------------------------------------------------------- oracle / ceilings
-def load_taste_inputs() -> tuple[pd.DataFrame, pd.DataFrame, float]:
-    """Hidden customer profiles, catalogue columns the taste function needs, catalogue median price."""
-    profiles = pd.read_parquet(DATA / "_state" / "customer_profiles.parquet").set_index("customer_id")
-    catalog = pd.read_parquet(
-        DATA / "product_master.parquet",
-        columns=["product_id", "h1_category", "h3_category", "h4_colour", "usage", "avg_rating",
-                 "current_price", "launch_date", "discontinue_date"],
-    ).drop_duplicates("product_id").set_index("product_id", drop=False)
-    return profiles, catalog, float(catalog["current_price"].median())
-
-
-def oracle_scores(frame: pd.DataFrame, profiles, catalog, median_price) -> np.ndarray:
-    """True simulator taste of every candidate at its query time (not deployable).
-
-    Uses generators.taste.true_taste_score, the same function the simulator draws
-    purchases from. Two deliberate choices:
-    * The simulator also multiplies by a small popularity boost (1 + 0.08 x prior
-      purchase count, capped at 5). It is left out: the simulator accumulates those
-      counts in customer-iteration order rather than in time order, so it is not a
-      well-defined function of the query time, and it is popularity rather than taste.
-    * The price term uses the catalogue median price as the reference. The simulator
-      uses the median of a random 320-product candidate sample, which can't be
-      reproduced per query.
-    The oracle is therefore a ceiling on *expected* rank: purchases are random draws
-    from these scores (and basket add-ons come from complement rules), so it is not
-    a perfect predictor.
-    """
-    out = np.zeros(len(frame))
-    positions = {idx: i for i, idx in enumerate(frame.index)}
-    for _, group in frame.groupby("session_id", sort=False):
-        cid = group["customer_id"].iloc[0]
-        if cid not in profiles.index:
-            continue
-        scores = true_taste_score(
-            profiles.loc[cid], catalog.loc[group["product_id"]], group["event_timestamp"].iloc[0],
-            median_price=median_price,
-        )
-        out[[positions[i] for i in group.index]] = scores
-    return out
-
-
-def gap_closed_bootstrap(model, random, oracle, iterations: int = 2000, seed: int = 7) -> dict:
-    """(model - random) / (oracle - random) on mean NDCG, with a paired bootstrap over orders.
-
-    Same seed and iteration count as paired_bootstrap; orders are resampled
-    together for all three orderings.
-    """
-    model, random, oracle = (np.asarray(x, dtype=float) for x in (model, random, oracle))
-    n = len(model)
-    if n == 0:
-        return {"value": None, "ci_low": None, "ci_high": None}
-
-    def ratio(m, r, o):
-        gap = o - r
-        return np.where(gap != 0, (m - r) / np.where(gap != 0, gap, 1), np.nan)
-
-    point = float(ratio(model.mean(), random.mean(), oracle.mean()))
-    idx = np.random.default_rng(seed).integers(0, n, size=(iterations, n))
-    samples = ratio(model[idx].mean(axis=1), random[idx].mean(axis=1), oracle[idx].mean(axis=1))
-    samples = samples[~np.isnan(samples)]
-    return {
-        "value": point,
-        "ci_low": float(np.quantile(samples, 0.025)) if len(samples) else None,
-        "ci_high": float(np.quantile(samples, 0.975)) if len(samples) else None,
-        "oracle_minus_random_ndcg10": float(oracle.mean() - random.mean()),
-    }
-
-
-def retrieval_ceiling(queries, history: "History", profiles, catalog, median_price, k: int = 100) -> dict:
-    """Rank ALL eligible products by true taste; how often is a bought product in the top k?
-
-    Eligible = launched and not discontinued at the query time, and not bought by
-    the customer before (the same exclusion as the candidate lists). The
-    denominator matches candidate-list coverage: every test order.
-    """
-    ids = catalog.index.to_numpy()
-    launch = pd.to_datetime(catalog["launch_date"]).to_numpy()
-    discontinue = pd.to_datetime(catalog["discontinue_date"]).to_numpy()
-    demand_by_month = {
-        m: np.array([product_demand_multiplier(row, pd.Timestamp(2025, m, 15))
-                     for row in catalog.itertuples(index=False)])
-        for m in range(1, 13)
-    }
-    position = {pid: i for i, pid in enumerate(ids)}
-    hits, recalls = 0, []
-    for q in queries.itertuples(index=False):
-        if q.customer_id not in profiles.index:
-            continue
-        ts = q.query_time
-        scores = true_taste_score(
-            profiles.loc[q.customer_id], catalog, ts, median_price=median_price,
-            demand=demand_by_month[ts.month],
-        )
-        eligible = (launch <= np.datetime64(ts)) & (discontinue >= np.datetime64(ts))
-        bought_before = history.bought_before(q.customer_id, ts)
-        for pid in bought_before:
-            if pid in position:
-                eligible[position[pid]] = False
-        scores = np.where(eligible, scores, -np.inf)
-        top = set(ids[np.argpartition(-scores, k)[:k]])
-        new_purchases = q.purchased - bought_before
-        found = len(new_purchases & top)
-        hits += int(found > 0)
-        if new_purchases:
-            recalls.append(found / min(len(new_purchases), k))
-    n = len(queries)
-    return {
-        "k": k,
-        "orders": int(n),
-        "hit_rate": hits / n if n else None,
-        "recall": float(np.mean(recalls)) if recalls else None,
-    }
 
 
 # --------------------------------------------------------------------------- main
@@ -604,20 +497,14 @@ def main(sample_limit: int = 400000, use_content: bool = True) -> dict:
     # Why the order counts differ between sections.
     pool_sizes = test_c.groupby("session_id")["label"].agg(["size", "sum"])
     with_purchase = pool_sizes[pool_sizes["sum"] > 0]
-    # Known issue, reported rather than changed so existing results stay comparable:
-    # add_features groups by (session, customer, anchor, time) and pandas drops groups
-    # whose anchor is missing, i.e. orders from customers with no prior views or
-    # purchases. Those orders never reach the scored tables.
-    no_anchor = set(pools_c.loc[pools_c["anchor"].isna(), "session_id"])
-    no_anchor_hits = set(pools_c.loc[pools_c["anchor"].isna() & pools_c["label"].eq(1), "session_id"])
     scored = set(test_c["session_id"])
+    cold_start = set(pools_c.loc[pools_c["anchor"].isna(), "session_id"])
     order_counts = {
         "test_orders": int(len(queries_c)),
         "orders_with_new_products": int(test_all["session_id"].nunique()),
-        "orders_dropped_no_history": int(len(no_anchor)),
+        "cold_start_orders": int(len(cold_start)),
         "orders_only_rebuying_previous_products": int(len(scored) - test_all["session_id"].nunique()),
         "orders_with_purchase_in_list": int(retrieval_stats["pool_contains_purchase"]),
-        "orders_with_purchase_in_list_dropped_no_history": int(len(no_anchor_hits)),
         "dropped_list_under_min_pool": int(((with_purchase["size"] < MIN_POOL)).sum()),
         "dropped_list_all_purchased": int(((with_purchase["size"] >= MIN_POOL) & (with_purchase["sum"] == with_purchase["size"])).sum()),
         "ranking_only_orders": int(test["session_id"].nunique()),
@@ -754,13 +641,11 @@ def write_report(report: dict) -> None:
     oc = report["order_counts"]
     lines += ["## Why the order counts differ", "",
               f"- {oc['test_orders']:,} paid orders fall in the test period.",
-              f"- {oc['orders_dropped_no_history']:,} came from customers with no earlier views or purchases; a known issue "
-              "(feature building groups by the history anchor and drops groups without one) leaves them out of the scored "
-              "tables. Kept as-is so results stay comparable; fixing it is a follow-up.",
+              f"- {oc['cold_start_orders']:,} came from customers with no earlier views or purchases (cold start); they are "
+              "scored with popularity candidates and empty-history feature defaults.",
               f"- {oc['orders_only_rebuying_previous_products']:,} only re-bought products the customer already had; "
               f"those products are excluded from candidates, so the end-to-end tables use {oc['orders_with_new_products']:,} orders.",
-              f"- {oc['orders_with_purchase_in_list']:,} orders had a bought product in the candidate list "
-              f"({oc['orders_with_purchase_in_list_dropped_no_history']:,} of them among the no-history orders above). Ranking-only tables "
+              f"- {oc['orders_with_purchase_in_list']:,} orders had a bought product in the candidate list. Ranking-only tables "
               f"need at least {report['settings']['min_pool']} candidates and at least one product that wasn't bought: "
               f"{oc['dropped_list_under_min_pool']:,} dropped for a short list and {oc['dropped_list_all_purchased']:,} because every "
               f"candidate was bought, leaving {oc['ranking_only_orders']:,}.", ""]
