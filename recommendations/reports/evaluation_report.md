@@ -1,6 +1,6 @@
 # Recommendation evaluation report
 
-Generated 2026-11-09T14:46:00+00:00 by `python -m recommendations.evaluate`.
+Generated 2026-11-09T14:58:19+00:00 by `python -m recommendations.evaluate`.
 
 **Question asked:** for each real order in the held-out period, given everything known one hour before it, does the system rank the products the customer actually bought near the top?
 
@@ -29,7 +29,6 @@ Every test order. A bought product missing from the candidate list counts as a m
 | Random order | 0.004 | 0.003 | 0.012 | 0.005 | 0.004 |
 | Popularity (most viewed) | 0.022 | 0.014 | 0.030 | 0.017 | 0.014 |
 | Retrieval score (no ranker) | 0.029 | 0.020 | 0.039 | 0.024 | 0.022 |
-| Old ranker (3 features) | 0.002 | 0.002 | 0.008 | 0.003 | 0.003 |
 | New ranker (11 features) | 0.047 | 0.035 | 0.060 | 0.039 | 0.036 |
 | Production blend (50/50) | 0.044 | 0.033 | 0.055 | 0.037 | 0.035 |
 | Segment-aware (popular for first-timers, blend otherwise) | 0.045 | 0.033 | 0.055 | 0.037 | 0.035 |
@@ -42,7 +41,6 @@ Every test order. A bought product missing from the candidate list counts as a m
 | Random order | 0.003 | 0.002 | 0.010 | 0.004 | 0.003 |
 | Popularity (most viewed) | 0.029 | 0.019 | 0.039 | 0.023 | 0.020 |
 | Retrieval score (no ranker) | 0.013 | 0.008 | 0.018 | 0.010 | 0.009 |
-| Old ranker (3 features) | 0.001 | 0.001 | 0.001 | 0.001 | 0.001 |
 | New ranker (11 features) | 0.031 | 0.022 | 0.041 | 0.026 | 0.024 |
 | Production blend (50/50) | 0.024 | 0.017 | 0.039 | 0.022 | 0.020 |
 | Segment-aware (popular for first-timers, blend otherwise) | 0.029 | 0.019 | 0.039 | 0.023 | 0.020 |
@@ -55,7 +53,6 @@ Every test order. A bought product missing from the candidate list counts as a m
 | Random order | 0.005 | 0.003 | 0.013 | 0.006 | 0.004 |
 | Popularity (most viewed) | 0.020 | 0.012 | 0.027 | 0.014 | 0.012 |
 | Retrieval score (no ranker) | 0.035 | 0.025 | 0.047 | 0.029 | 0.026 |
-| Old ranker (3 features) | 0.003 | 0.002 | 0.010 | 0.004 | 0.003 |
 | New ranker (11 features) | 0.053 | 0.039 | 0.066 | 0.044 | 0.041 |
 | Production blend (50/50) | 0.051 | 0.039 | 0.062 | 0.042 | 0.041 |
 | Segment-aware (popular for first-timers, blend otherwise) | 0.051 | 0.039 | 0.062 | 0.042 | 0.041 |
@@ -72,7 +69,6 @@ Only orders whose candidate list contains a bought product: measures ordering al
 | Random order | 0.036 | 0.020 | 0.093 | 0.039 | 0.023 |
 | Popularity (most viewed) | 0.162 | 0.096 | 0.220 | 0.116 | 0.087 |
 | Retrieval score (no ranker) | 0.207 | 0.141 | 0.294 | 0.169 | 0.136 |
-| Old ranker (3 features) | 0.022 | 0.014 | 0.064 | 0.027 | 0.017 |
 | New ranker (11 features) | 0.350 | 0.246 | 0.449 | 0.278 | 0.229 |
 | Production blend (50/50) | 0.324 | 0.233 | 0.418 | 0.263 | 0.220 |
 | Segment-aware (popular for first-timers, blend otherwise) | 0.332 | 0.235 | 0.417 | 0.263 | 0.220 |
@@ -85,7 +81,6 @@ Only orders whose candidate list contains a bought product: measures ordering al
 | Random order | 0.036 | 0.023 | 0.114 | 0.048 | 0.030 |
 | Popularity (most viewed) | 0.322 | 0.199 | 0.436 | 0.238 | 0.183 |
 | Retrieval score (no ranker) | 0.141 | 0.091 | 0.210 | 0.113 | 0.086 |
-| Old ranker (3 features) | 0.012 | 0.009 | 0.018 | 0.010 | 0.008 |
 | New ranker (11 features) | 0.363 | 0.244 | 0.474 | 0.281 | 0.222 |
 | Production blend (50/50) | 0.280 | 0.186 | 0.442 | 0.240 | 0.181 |
 | Segment-aware (popular for first-timers, blend otherwise) | 0.322 | 0.199 | 0.436 | 0.238 | 0.183 |
@@ -98,7 +93,6 @@ Only orders whose candidate list contains a bought product: measures ordering al
 | Random order | 0.036 | 0.019 | 0.089 | 0.037 | 0.022 |
 | Popularity (most viewed) | 0.126 | 0.073 | 0.171 | 0.088 | 0.065 |
 | Retrieval score (no ranker) | 0.222 | 0.152 | 0.313 | 0.182 | 0.147 |
-| Old ranker (3 features) | 0.024 | 0.015 | 0.074 | 0.031 | 0.020 |
 | New ranker (11 features) | 0.347 | 0.246 | 0.443 | 0.277 | 0.230 |
 | Production blend (50/50) | 0.334 | 0.243 | 0.412 | 0.269 | 0.228 |
 | Segment-aware (popular for first-timers, blend otherwise) | 0.334 | 0.243 | 0.412 | 0.269 | 0.228 |
@@ -110,7 +104,6 @@ Only orders whose candidate list contains a bought product: measures ordering al
 |---|---|---|
 | new ranker vs retrieval | +0.0151 | +0.0125 to +0.0178 |
 | new ranker vs popularity | +0.0224 | +0.0193 to +0.0257 |
-| new ranker vs legacy ranker | +0.0356 | +0.0316 to +0.0396 |
 | new ranker vs random | +0.0337 | +0.0298 to +0.0376 |
 | segment aware vs retrieval | +0.0132 | +0.0108 to +0.0156 |
 | segment aware vs popularity | +0.0206 | +0.0177 to +0.0236 |
@@ -129,7 +122,6 @@ Because the data is synthetic, the true taste function is known. The oracle rank
 | Random order | 0.0% (0.0% to 0.0%) | 0.0% (0.0% to 0.0%) | 0.0% (0.0% to 0.0%) |
 | Popularity (most viewed) | 29.2% (22.9% to 35.6%) | 55.1% (40.9% to 70.9%) | 21.3% (14.9% to 28.5%) |
 | Retrieval score (no ranker) | 48.1% (40.3% to 56.7%) | 18.3% (7.2% to 29.5%) | 57.3% (47.3% to 68.1%) |
-| Old ranker (3 features) | -4.8% (-8.8% to -1.0%) | -9.9% (-18.3% to -2.8%) | -3.2% (-7.9% to 1.1%) |
 | New ranker (11 features) | 87.0% (77.1% to 97.4%) | 64.2% (50.1% to 80.6%) | 94.0% (81.2% to 108.5%) |
 | Production blend (50/50) | 81.8% (72.2% to 91.8%) | 53.1% (39.3% to 68.7%) | 90.5% (77.7% to 104.3%) |
 | Segment-aware (popular for first-timers, blend otherwise) | 82.2% (72.5% to 92.4%) | 55.1% (40.9% to 70.9%) | 90.5% (77.7% to 104.3%) |
@@ -142,7 +134,6 @@ Because the data is synthetic, the true taste function is known. The oracle rank
 | Random order | 0.0% (0.0% to 0.0%) | 0.0% (0.0% to 0.0%) | 0.0% (0.0% to 0.0%) |
 | Popularity (most viewed) | 26.9% (20.9% to 33.3%) | 53.8% (40.8% to 69.0%) | 18.9% (12.7% to 25.1%) |
 | Retrieval score (no ranker) | 45.6% (38.3% to 53.8%) | 18.3% (6.8% to 30.2%) | 53.6% (44.7% to 62.9%) |
-| Old ranker (3 features) | -4.0% (-8.1% to -0.2%) | -10.8% (-20.8% to -3.0%) | -1.9% (-6.8% to 2.7%) |
 | New ranker (11 features) | 83.6% (73.7% to 94.4%) | 66.1% (51.1% to 82.6%) | 88.8% (77.6% to 101.2%) |
 | Production blend (50/50) | 78.4% (68.5% to 88.8%) | 54.4% (39.9% to 69.6%) | 85.5% (74.5% to 98.3%) |
 | Segment-aware (popular for first-timers, blend otherwise) | 78.3% (68.6% to 88.3%) | 53.8% (40.8% to 69.0%) | 85.5% (74.5% to 98.3%) |
@@ -180,7 +171,6 @@ Ranking **all** eligible products by true taste, the top 100 contains a product 
 
 ```json
 {
-  "sample_limit": 400000,
   "pool_size": 100,
   "per_source": 20,
   "min_pool": 10,
