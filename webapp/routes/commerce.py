@@ -48,8 +48,9 @@ def cart_add(product_id: str = Form(...), qty: int = Form(1), sid: str = Cookie(
         )
     con.execute(
         """INSERT INTO cart (customer_id,product_id,quantity,added_at) VALUES (?,?,?,?)
-        ON CONFLICT(customer_id,product_id) DO UPDATE SET quantity=MIN(quantity+excluded.quantity, ?)""",
-        (cid, product_id, qty, now(), int(stock["current_stock"])),
+        ON CONFLICT(customer_id,product_id) DO UPDATE SET quantity=CASE
+            WHEN cart.quantity+excluded.quantity < ? THEN cart.quantity+excluded.quantity ELSE ? END""",
+        (cid, product_id, qty, now(), int(stock["current_stock"]), int(stock["current_stock"])),
     )
     log_event(
         con, cid, sid, s["device_type"], "add_to_cart", "pdp", product_id=product_id
@@ -278,7 +279,7 @@ def checkout(
         "Debit Card",
         "Net Banking",
         "COD",
-        "Amazon Pay",
+        "Wallet",
     }
     if payment_method not in payment_methods:
         con.close()

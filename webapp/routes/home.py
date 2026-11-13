@@ -65,7 +65,7 @@ def home(request: Request, sid: str = Cookie(None)):
         request,
         prods=con.execute(
             """SELECT p.*, i.current_stock FROM products p JOIN inventory i USING(product_id)
-        WHERE i.current_stock > 0 ORDER BY p.avg_rating DESC, p.review_count DESC LIMIT 24"""
+        WHERE i.current_stock > 0 ORDER BY COALESCE(p.avg_rating,0) DESC, p.review_count DESC LIMIT 24"""
         ).fetchall(),
         cats=_departments(con),
         title="Home",
@@ -122,6 +122,11 @@ async def recommendations_api(surface: str, request: Request, sid: str = Cookie(
         context["product_id"] = body["product_id"]
 
     customer_id = session["customer_id"]
+    reset = con.execute(
+        "SELECT recommendations_reset_at FROM customers WHERE customer_id=?", (customer_id,)
+    ).fetchone()
+    # After "Reset my recommendations" only live activity since the reset counts.
+    context["history_reset"] = bool(reset and reset[0])
     if surface == "cart" and "cart" not in context:
         context["cart"] = [
             row["product_id"]

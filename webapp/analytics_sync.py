@@ -90,6 +90,24 @@ def mirror_rows(table: str, df: pd.DataFrame):
         print(f"[analytics_sync] mirror skipped for {table}: {e}")
 
 
+def forget_customer_activity(customer_id: str):
+    """Remove a customer's activity from the DuckDB mirror after an account reset (best-effort)."""
+    if not MIRROR_ENABLED:
+        return
+    try:
+        con = ensure_duckdb()
+        try:
+            existing = {row[0] for row in con.execute("SELECT table_name FROM information_schema.tables").fetchall()}
+            for table in ("clickstream", "returns", "transactions", "orders"):
+                if table in existing:
+                    con.execute(f"DELETE FROM {table} WHERE customer_id=?", [customer_id])
+            con.commit()
+        finally:
+            con.close()
+    except Exception as e:
+        print(f"[analytics_sync] reset cleanup skipped: {e}")
+
+
 def mirror_event(row: dict):
     mirror_rows("clickstream", pd.DataFrame([row]))
 
@@ -125,18 +143,22 @@ def mirror_inventory_movement(row: dict):
     mirror_rows("inventory_movements", pd.DataFrame([row]))
 
 
-def sync_from_sqlite(db_path: Path):
-    """One-time/full rebuild of the analytical mirror from the live SQLite DB."""
-    import sqlite3
-    sqlite = sqlite3.connect(db_path)
+def sync_from_live(db_path: Path | None = None):
+    """Full rebuild of the DuckDB analytical mirror from the live database
+    (Postgres when DATABASE_URL is set, otherwise the SQLite file at db_path)."""
     try:
+        from . import database
+    except ImportError:
+        import database
+    live = database.connect(db_path)
+    try:
+        existing = database.table_names(live)
         duck = ensure_duckdb()
         try:
             for table in ["customers", "orders", "transactions", "clickstream", "inventory", "returns", "inventory_movements"]:
-                try:
-                    df = pd.read_sql_query(f"SELECT * FROM {table}", sqlite)
-                except Exception:
+                if table not in existing:
                     continue
+                df = database.read_frame(live, f"SELECT * FROM {table}")
                 duck.execute(f"DROP TABLE IF EXISTS {table}")
                 df = _duckdb_frame(df)
                 duck.register("_df", df)
@@ -146,9 +168,12 @@ def sync_from_sqlite(db_path: Path):
         finally:
             duck.close()
     finally:
-        sqlite.close()
+        live.close()
+
+
+sync_from_sqlite = sync_from_live  # earlier name, kept for existing callers
 
 
 if __name__ == "__main__":
-    sync_from_sqlite(BASE / "pantree_app.db")
+    sync_from_live(BASE / "pantree_app.db")
     print(f"Synced SQLite into {DUCKDB.name}")

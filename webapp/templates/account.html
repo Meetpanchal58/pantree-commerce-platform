@@ -2,6 +2,7 @@
 {% block content %}
 <div class="crumb">Home / Your account</div>
 <h1 class="checkout-title">Your account</h1>
+{% if msg %}<p role="status" style="color:#176348;background:#eff8f2;border:1px solid #cce7d5;padding:11px;border-radius:8px">{{ msg }}</p>{% endif %}
 <div class="account-layout">
   <section class="account-panel">
     <div class="eyebrow">Personal details</div>
@@ -26,6 +27,16 @@
     {% if orders %}
       {% for order in orders %}<div class="order-row"><span><b>{{ order.order_id }}</b><small>{{ order.order_timestamp }}</small><small>{{ order.ship_address_line1 or 'Address unavailable' }}, {{ order.ship_city }}, {{ order.ship_state }} {{ order.ship_postal_code or '' }}</small></span><span>{{ order.order_status }}</span><strong>₹{{ '{:,.2f}'.format(order.total_amount) }}</strong></div>{% endfor %}
     {% else %}<p class="muted">No orders yet.</p>{% endif %}
+  </section>
+  <section class="account-panel">
+    <div class="eyebrow">Recommendations</div>
+    <h2>Reset my recommendations</h2>
+    <p class="muted">Deletes your browsing history, cart, wishlist and orders so recommendations start fresh.
+      Your account and sign-in details are kept.</p>
+    <form method="post" action="/account/reset-recommendations"
+          onsubmit="return confirm('This deletes your activity, orders and recommendations. Your account stays. Continue?');">
+      <button class="btn" type="submit">Reset my recommendations</button>
+    </form>
   </section>
 </div>
 {% endblock %}

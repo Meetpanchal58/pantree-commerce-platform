@@ -17,7 +17,6 @@ Run: python -m recommendations.online_metrics [--db webapp/pantree_app.db]
 import argparse
 import math
 import os
-import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -42,18 +41,20 @@ def wilson(successes: int, trials: int, z: float = 1.96) -> tuple[float, float]:
 
 def load(db_path: Path) -> pd.DataFrame:
     """One row per served impression with click and post-click outcome flags."""
-    con = sqlite3.connect(db_path)
+    from webapp import database  # Postgres when DATABASE_URL is set, else the SQLite file
+
+    con = database.connect(db_path)
     try:
-        tables = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        tables = database.table_names(con)
         if "recommendation_impressions" not in tables:
             return pd.DataFrame()
-        imps = pd.read_sql("SELECT * FROM recommendation_impressions", con)
-        clicks = pd.read_sql("SELECT impression_id, clicked_at FROM recommendation_clicks", con)
-        carts = pd.read_sql(
-            "SELECT customer_id, product_id, event_timestamp FROM clickstream WHERE event_type='add_to_cart'", con
+        imps = database.read_frame(con, "SELECT * FROM recommendation_impressions")
+        clicks = database.read_frame(con, "SELECT impression_id, clicked_at FROM recommendation_clicks")
+        carts = database.read_frame(
+            con, "SELECT customer_id, product_id, event_timestamp FROM clickstream WHERE event_type='add_to_cart'"
         ) if "clickstream" in tables else pd.DataFrame(columns=["customer_id", "product_id", "event_timestamp"])
-        buys = pd.read_sql(
-            "SELECT customer_id, product_id, order_timestamp FROM transactions WHERE " + purchase_sql(), con
+        buys = database.read_frame(
+            con, "SELECT customer_id, product_id, order_timestamp FROM transactions WHERE " + purchase_sql()
         ) if "transactions" in tables else pd.DataFrame(columns=["customer_id", "product_id", "order_timestamp"])
     finally:
         con.close()

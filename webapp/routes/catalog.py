@@ -109,10 +109,10 @@ def browse(
     order_by = {
         "price_asc": "p.current_price ASC",
         "price_desc": "p.current_price DESC",
-        "rating": "p.avg_rating DESC",
+        "rating": "COALESCE(p.avg_rating,0) DESC",
         "newest": "p.launch_date DESC",
-        "relevance": "p.avg_rating DESC, p.review_count DESC",
-    }.get(sort, "p.avg_rating DESC")
+        "relevance": "COALESCE(p.avg_rating,0) DESC, p.review_count DESC",
+    }.get(sort, "COALESCE(p.avg_rating,0) DESC")
     base = " FROM products p JOIN inventory i USING(product_id) WHERE " + " AND ".join(
         where
     )
@@ -174,7 +174,7 @@ def search(q: str, request: Request, sid: str = Cookie(None)):
     prods = con.execute(
         """SELECT p.*, i.current_stock FROM products p JOIN inventory i USING(product_id)
         WHERE p.product_name LIKE ? OR p.brand_name LIKE ? OR p.h3_category LIKE ? OR p.h4_colour LIKE ?
-        ORDER BY p.avg_rating DESC, p.review_count DESC LIMIT 48""",
+        ORDER BY COALESCE(p.avg_rating,0) DESC, p.review_count DESC LIMIT 48""",
         (like, like, like, like),
     ).fetchall()
     ctx = base_ctx(

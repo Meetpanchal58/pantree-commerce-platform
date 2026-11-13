@@ -106,6 +106,6 @@ class ReportingTests(unittest.TestCase):
         self.assertIn("popularity for first-time buyers", policy_summary({"policy": on}))
 
     def test_evaluation_doc_has_the_generated_ablation_block(self):
-        doc = (Path(__file__).resolve().parents[1] / "docs" / "evaluation.md").read_text()
+        doc = (Path(__file__).resolve().parents[1] / "docs" / "recommender.md").read_text()
         self.assertIn("<!-- ABLATION:START -->", doc)
         self.assertIn("<!-- ABLATION:END -->", doc)
