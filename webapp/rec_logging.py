@@ -12,9 +12,14 @@ import os
 
 MAX_SEEN_PER_REQUEST = 200
 AB_SALT = "pantree-ranker-ab-v1"
+_TABLES_READY = set()  # Postgres: databases whose tables were already checked by this process
 
 
 def ensure_rec_tables(con) -> None:
+    # On Postgres every statement is a network round trip, so check the tables once per process.
+    remote = type(con).__name__ == "PgConnection"
+    if remote and "pg" in _TABLES_READY:
+        return
     con.execute(
         """CREATE TABLE IF NOT EXISTS recommendation_impressions (
             impression_id TEXT PRIMARY KEY,
@@ -54,6 +59,8 @@ def ensure_rec_tables(con) -> None:
     con.execute(
         "CREATE INDEX IF NOT EXISTS ix_rec_click_impression ON recommendation_clicks(impression_id)"
     )
+    if remote:
+        _TABLES_READY.add("pg")
 
 
 def assign_variant(customer_id: str) -> str:
@@ -73,20 +80,22 @@ def assign_variant(customer_id: str) -> str:
 def log_impressions(con, request_id, customer_id, session_id, surface, intent, variant, items, served_at, uid):
     """Store every served recommendation; returns items with request id and position."""
     ensure_rec_tables(con)
-    tagged = []
+    rows, tagged = [], []
     for position, item in enumerate(items, start=1):
-        con.execute(
+        rows.append((
+            uid("imp"), request_id, customer_id, session_id, surface, intent, variant,
+            item["product_id"], position, item.get("source"),
+            float(item["score"]) if item.get("score") is not None else None, served_at,
+        ))
+        tagged.append({**item, "rec_request_id": request_id, "rec_position": position})
+    if rows:  # one batched call instead of one round trip per card
+        con.executemany(
             """INSERT INTO recommendation_impressions
                (impression_id, request_id, customer_id, session_id, surface, intent, variant,
                 product_id, position, source, score, served_at)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                uid("imp"), request_id, customer_id, session_id, surface, intent, variant,
-                item["product_id"], position, item.get("source"),
-                float(item["score"]) if item.get("score") is not None else None, served_at,
-            ),
+            rows,
         )
-        tagged.append({**item, "rec_request_id": request_id, "rec_position": position})
     return tagged
 
 

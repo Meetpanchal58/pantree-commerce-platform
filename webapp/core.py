@@ -464,18 +464,39 @@ def cart_count(con, cid):
     return r["n"] if r else 0
 
 
+_CATALOG_CACHE: dict = {}
+CATALOG_CACHE_SECONDS = 600
+
+
+def _catalog_cached(con, key, compute):
+    """Catalogue facts change only when the shop is re-seeded. On Postgres (a network round
+    trip per query) reuse them for a few minutes; SQLite keeps reading them every time."""
+    if not database.is_postgres(con):
+        return compute()
+    hit = _CATALOG_CACHE.get(key)
+    if hit and time.monotonic() - hit[0] < CATALOG_CACHE_SECONDS:
+        return hit[1]
+    value = compute()
+    _CATALOG_CACHE[key] = (time.monotonic(), value)
+    return value
+
+
+def _department_counts(con):
+    return _catalog_cached(con, "departments", lambda: {
+        r["h1_category"]: r["n"]
+        for r in con.execute("SELECT h1_category, COUNT(*) AS n FROM products GROUP BY h1_category ORDER BY 1")
+    })
+
+
 def _departments(con):
-    return [
-        r["h1_category"]
-        for r in con.execute("SELECT DISTINCT h1_category FROM products ORDER BY 1")
-    ]
+    return list(_department_counts(con))
 
 
 def _subcategories(con):
-    return [
+    return _catalog_cached(con, "subcategories", lambda: [
         r["h2_category"]
         for r in con.execute("SELECT DISTINCT h2_category FROM products ORDER BY 1")
-    ]
+    ])
 
 
 def _filter_options(con):
@@ -494,10 +515,12 @@ def _filter_options(con):
 
 
 def _catalog_stats(con):
-    row = con.execute(
-        "SELECT COUNT(*) products, COUNT(DISTINCT brand_name) brands, COUNT(DISTINCT h1_category) departments FROM products"
-    ).fetchone()
-    return dict(row)
+    def compute():
+        row = con.execute(
+            "SELECT COUNT(*) products, COUNT(DISTINCT brand_name) brands, COUNT(DISTINCT h1_category) departments FROM products"
+        ).fetchone()
+        return {**dict(row), "by_department": _department_counts(con)}
+    return _catalog_cached(con, "stats", compute)
 
 
 def _catalog_price_bounds(con):
