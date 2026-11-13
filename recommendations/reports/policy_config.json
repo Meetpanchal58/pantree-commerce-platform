@@ -1,29 +1,29 @@
 {
   "chosen": {
     "quotas": {
-      "collaborative": 80,
-      "content": 17,
-      "fbt": 17,
-      "trending": 17,
-      "recent_activity": 17
+      "collaborative": 20,
+      "content": 7,
+      "fbt": 7,
+      "trending": 7,
+      "recent_activity": 7
     },
-    "pool_size": 150,
+    "pool_size": 50,
     "ranker_blend": 0.75,
     "first_timer_popularity": false,
-    "trending_window_days": 30
+    "trending_window_days": 60
   },
   "chosen_on": "validation",
   "periods": {
-    "retrieval_cutoff": "2025-12-17 10:05:18",
+    "retrieval_cutoff": "2026-04-30 21:37:05",
     "fit": [
-      "2025-12-24 10:05:18",
-      "2026-02-04 12:46:58"
+      "2026-05-07 21:37:05",
+      "2026-06-30 13:01:54.800000"
     ],
     "validation": [
-      "2026-02-11 12:46:58",
-      "2026-03-27 21:03:57.200000"
+      "2026-07-07 13:01:54.800000",
+      "2026-08-16 23:40:34"
     ],
-    "test_starts": "2026-04-03 21:03:57.200000"
+    "test_starts": "2026-08-23 23:40:34"
   },
   "generated_by": "python -m recommendations.tune_policy"
 }

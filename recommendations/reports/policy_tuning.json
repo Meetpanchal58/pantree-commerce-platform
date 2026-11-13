@@ -1,20 +1,20 @@
 {
-  "generated_at": "2026-11-09T15:43:01+00:00",
+  "generated_at": "2026-11-13T22:39:13+00:00",
   "periods": {
-    "retrieval_cutoff": "2025-12-17 10:05:18",
+    "retrieval_cutoff": "2026-04-30 21:37:05",
     "fit": [
-      "2025-12-24 10:05:18",
-      "2026-02-04 12:46:58"
+      "2026-05-07 21:37:05",
+      "2026-06-30 13:01:54.800000"
     ],
     "validation": [
-      "2026-02-11 12:46:58",
-      "2026-03-27 21:03:57.200000"
+      "2026-07-07 13:01:54.800000",
+      "2026-08-16 23:40:34"
     ],
-    "test_starts": "2026-04-03 21:03:57.200000"
+    "test_starts": "2026-08-23 23:40:34"
   },
-  "fit_orders": 2538,
-  "validation_orders": 2471,
-  "validation_orders_with_new_products": 2407,
+  "fit_orders": 5887,
+  "validation_orders": 5646,
+  "validation_orders_with_new_products": 5438,
   "metric": "end-to-end NDCG@10 of the served policy on validation orders",
   "search": "staged: trending window -> quotas x pool size -> ranker blend x first-timer rule",
   "default": {
@@ -32,23 +32,23 @@
   },
   "chosen": {
     "quotas": {
-      "collaborative": 80,
-      "content": 17,
-      "fbt": 17,
-      "trending": 17,
-      "recent_activity": 17
+      "collaborative": 20,
+      "content": 7,
+      "fbt": 7,
+      "trending": 7,
+      "recent_activity": 7
     },
-    "pool_size": 150,
+    "pool_size": 50,
     "ranker_blend": 0.75,
     "first_timer_popularity": false,
-    "trending_window_days": 30
+    "trending_window_days": 60
   },
-  "chosen_val_ndcg10": 0.03862851238270223,
-  "default_val_ndcg10": 0.036170096134052115,
+  "chosen_val_ndcg10": 0.07783104017971469,
+  "default_val_ndcg10": 0.07028730209126072,
   "chosen_vs_default_val": {
-    "mean_diff": 0.0024584162486501176,
-    "ci_low": -0.0002024411784388368,
-    "ci_high": 0.004865026972541287
+    "mean_diff": 0.007543738088453984,
+    "ci_low": 0.0039750309514317754,
+    "ci_high": 0.011187952272777224
   },
   "rows": [
     {
@@ -66,9 +66,9 @@
         "first_timer_popularity": true,
         "trending_window_days": 7
       },
-      "val_ndcg10": 0.03360373888717192,
-      "val_pool_recall": 0.1162927572358399,
-      "val_pool_contains_purchase": 0.141643059490085
+      "val_ndcg10": 0.06993544618486741,
+      "val_pool_recall": 0.4032426137060193,
+      "val_pool_contains_purchase": 0.43322706340772227
     },
     {
       "stage": "trending_window",
@@ -85,9 +85,9 @@
         "first_timer_popularity": true,
         "trending_window_days": 14
       },
-      "val_ndcg10": 0.036141422025098006,
-      "val_pool_recall": 0.11646586345381525,
-      "val_pool_contains_purchase": 0.141643059490085
+      "val_ndcg10": 0.06900075582064534,
+      "val_pool_recall": 0.4029667770013486,
+      "val_pool_contains_purchase": 0.43269571377966703
     },
     {
       "stage": "trending_window",
@@ -104,9 +104,9 @@
         "first_timer_popularity": true,
         "trending_window_days": 30
       },
-      "val_ndcg10": 0.036170096134052115,
-      "val_pool_recall": 0.12283617227530812,
-      "val_pool_contains_purchase": 0.14730878186968838
+      "val_ndcg10": 0.07028730209126072,
+      "val_pool_recall": 0.40535736177516246,
+      "val_pool_contains_purchase": 0.4353524619199433
     },
     {
       "stage": "trending_window",
@@ -123,9 +123,9 @@
         "first_timer_popularity": true,
         "trending_window_days": 60
       },
-      "val_ndcg10": 0.03573107652346883,
-      "val_pool_recall": 0.1260559479296496,
-      "val_pool_contains_purchase": 0.1517604208822339
+      "val_ndcg10": 0.07188310368412833,
+      "val_pool_recall": 0.4030433983082015,
+      "val_pool_contains_purchase": 0.43304994686503717
     },
     {
       "stage": "quotas_pool",
@@ -140,11 +140,11 @@
         "pool_size": 50,
         "ranker_blend": 0.5,
         "first_timer_popularity": true,
-        "trending_window_days": 30
+        "trending_window_days": 60
       },
-      "val_ndcg10": 0.033759036431264974,
-      "val_pool_recall": 0.09690486082260075,
-      "val_pool_contains_purchase": 0.11452853095912587
+      "val_ndcg10": 0.07225682989788712,
+      "val_pool_recall": 0.3051520166727964,
+      "val_pool_contains_purchase": 0.33421891604675874
     },
     {
       "stage": "quotas_pool",
@@ -159,11 +159,11 @@
         "pool_size": 50,
         "ranker_blend": 0.5,
         "first_timer_popularity": true,
-        "trending_window_days": 30
+        "trending_window_days": 60
       },
-      "val_ndcg10": 0.03514472598110158,
-      "val_pool_recall": 0.10434842819554078,
-      "val_pool_contains_purchase": 0.12140833670578713
+      "val_ndcg10": 0.07055554974828682,
+      "val_pool_recall": 0.29620264803236485,
+      "val_pool_contains_purchase": 0.324477506199079
     },
     {
       "stage": "quotas_pool",
@@ -178,11 +178,11 @@
         "pool_size": 100,
         "ranker_blend": 0.5,
         "first_timer_popularity": true,
-        "trending_window_days": 30
+        "trending_window_days": 60
       },
-      "val_ndcg10": 0.036170096134052115,
-      "val_pool_recall": 0.12283617227530812,
-      "val_pool_contains_purchase": 0.14730878186968838
+      "val_ndcg10": 0.07188310368412833,
+      "val_pool_recall": 0.4030433983082015,
+      "val_pool_contains_purchase": 0.43304994686503717
     },
     {
       "stage": "quotas_pool",
@@ -197,11 +197,11 @@
         "pool_size": 100,
         "ranker_blend": 0.5,
         "first_timer_popularity": true,
-        "trending_window_days": 30
+        "trending_window_days": 60
       },
-      "val_ndcg10": 0.035205074303457394,
-      "val_pool_recall": 0.13121451322531505,
-      "val_pool_contains_purchase": 0.15702144880615135
+      "val_ndcg10": 0.07006220530624549,
+      "val_pool_recall": 0.42279637121490743,
+      "val_pool_contains_purchase": 0.45217853347502657
     },
     {
       "stage": "quotas_pool",
@@ -216,11 +216,11 @@
         "pool_size": 100,
         "ranker_blend": 0.5,
         "first_timer_popularity": true,
-        "trending_window_days": 30
+        "trending_window_days": 60
       },
-      "val_ndcg10": 0.034675476863857996,
-      "val_pool_recall": 0.13519595623874808,
-      "val_pool_contains_purchase": 0.16268717118575476
+      "val_ndcg10": 0.069154943376245,
+      "val_pool_recall": 0.4299068284908667,
+      "val_pool_contains_purchase": 0.46050301098122565
     },
     {
       "stage": "quotas_pool",
@@ -235,11 +235,11 @@
         "pool_size": 100,
         "ranker_blend": 0.5,
         "first_timer_popularity": true,
-        "trending_window_days": 30
+        "trending_window_days": 60
       },
-      "val_ndcg10": 0.034386164956697086,
-      "val_pool_recall": 0.1349536075335826,
-      "val_pool_contains_purchase": 0.16147308781869688
+      "val_ndcg10": 0.07041582539178473,
+      "val_pool_recall": 0.42399166360181434,
+      "val_pool_contains_purchase": 0.45501239815798794
     },
     {
       "stage": "quotas_pool",
@@ -254,11 +254,11 @@
         "pool_size": 150,
         "ranker_blend": 0.5,
         "first_timer_popularity": true,
-        "trending_window_days": 30
+        "trending_window_days": 60
       },
-      "val_ndcg10": 0.03529162846403329,
-      "val_pool_recall": 0.14655172413793102,
-      "val_pool_contains_purchase": 0.1772561715904492
+      "val_ndcg10": 0.06897540453885082,
+      "val_pool_recall": 0.46366617629030277,
+      "val_pool_contains_purchase": 0.49132128940843073
     },
     {
       "stage": "quotas_pool",
@@ -273,11 +273,11 @@
         "pool_size": 150,
         "ranker_blend": 0.5,
         "first_timer_popularity": true,
-        "trending_window_days": 30
+        "trending_window_days": 60
       },
-      "val_ndcg10": 0.03699696638247096,
-      "val_pool_recall": 0.15337210912615978,
-      "val_pool_contains_purchase": 0.1849453662484824
+      "val_ndcg10": 0.06905564766498598,
+      "val_pool_recall": 0.47762657839892114,
+      "val_pool_contains_purchase": 0.5049592631951825
     },
     {
       "stage": "quotas_pool",
@@ -292,11 +292,11 @@
         "pool_size": 150,
         "ranker_blend": 0.5,
         "first_timer_popularity": true,
-        "trending_window_days": 30
+        "trending_window_days": 60
       },
-      "val_ndcg10": 0.03609802448725072,
-      "val_pool_recall": 0.15544938374186398,
-      "val_pool_contains_purchase": 0.18939700526102793
+      "val_ndcg10": 0.06938252886506609,
+      "val_pool_recall": 0.4853193576069633,
+      "val_pool_contains_purchase": 0.5138150903294367
     },
     {
       "stage": "quotas_pool",
@@ -311,181 +311,181 @@
         "pool_size": 150,
         "ranker_blend": 0.5,
         "first_timer_popularity": true,
-        "trending_window_days": 30
+        "trending_window_days": 60
       },
-      "val_ndcg10": 0.03702429707295177,
-      "val_pool_recall": 0.15787287079351892,
-      "val_pool_contains_purchase": 0.19182517199514368
+      "val_ndcg10": 0.06946378761847267,
+      "val_pool_recall": 0.49475910261125416,
+      "val_pool_contains_purchase": 0.5226709174636911
     },
     {
       "stage": "blend_first_timer",
       "config": {
         "quotas": {
-          "collaborative": 80,
-          "content": 17,
-          "fbt": 17,
-          "trending": 17,
-          "recent_activity": 17
+          "collaborative": 20,
+          "content": 7,
+          "fbt": 7,
+          "trending": 7,
+          "recent_activity": 7
         },
-        "pool_size": 150,
+        "pool_size": 50,
         "ranker_blend": 0.0,
         "first_timer_popularity": true,
-        "trending_window_days": 30
+        "trending_window_days": 60
       },
-      "val_ndcg10": 0.026592825026281113
+      "val_ndcg10": 0.04835995290608959
     },
     {
       "stage": "blend_first_timer",
       "config": {
         "quotas": {
-          "collaborative": 80,
-          "content": 17,
-          "fbt": 17,
-          "trending": 17,
-          "recent_activity": 17
+          "collaborative": 20,
+          "content": 7,
+          "fbt": 7,
+          "trending": 7,
+          "recent_activity": 7
         },
-        "pool_size": 150,
+        "pool_size": 50,
         "ranker_blend": 0.0,
         "first_timer_popularity": false,
-        "trending_window_days": 30
+        "trending_window_days": 60
       },
-      "val_ndcg10": 0.023354061829101096
+      "val_ndcg10": 0.048079521383611275
     },
     {
       "stage": "blend_first_timer",
       "config": {
         "quotas": {
-          "collaborative": 80,
-          "content": 17,
-          "fbt": 17,
-          "trending": 17,
-          "recent_activity": 17
+          "collaborative": 20,
+          "content": 7,
+          "fbt": 7,
+          "trending": 7,
+          "recent_activity": 7
         },
-        "pool_size": 150,
+        "pool_size": 50,
         "ranker_blend": 0.25,
         "first_timer_popularity": true,
-        "trending_window_days": 30
+        "trending_window_days": 60
       },
-      "val_ndcg10": 0.035016631423072035
+      "val_ndcg10": 0.06325056946970495
     },
     {
       "stage": "blend_first_timer",
       "config": {
         "quotas": {
-          "collaborative": 80,
-          "content": 17,
-          "fbt": 17,
-          "trending": 17,
-          "recent_activity": 17
+          "collaborative": 20,
+          "content": 7,
+          "fbt": 7,
+          "trending": 7,
+          "recent_activity": 7
         },
-        "pool_size": 150,
+        "pool_size": 50,
         "ranker_blend": 0.25,
         "first_timer_popularity": false,
-        "trending_window_days": 30
+        "trending_window_days": 60
       },
-      "val_ndcg10": 0.034883797526122536
+      "val_ndcg10": 0.06526672989394883
     },
     {
       "stage": "blend_first_timer",
       "config": {
         "quotas": {
-          "collaborative": 80,
-          "content": 17,
-          "fbt": 17,
-          "trending": 17,
-          "recent_activity": 17
+          "collaborative": 20,
+          "content": 7,
+          "fbt": 7,
+          "trending": 7,
+          "recent_activity": 7
         },
-        "pool_size": 150,
+        "pool_size": 50,
         "ranker_blend": 0.5,
         "first_timer_popularity": true,
-        "trending_window_days": 30
+        "trending_window_days": 60
       },
-      "val_ndcg10": 0.03702429707295177
+      "val_ndcg10": 0.07225682989788712
     },
     {
       "stage": "blend_first_timer",
       "config": {
         "quotas": {
-          "collaborative": 80,
-          "content": 17,
-          "fbt": 17,
-          "trending": 17,
-          "recent_activity": 17
+          "collaborative": 20,
+          "content": 7,
+          "fbt": 7,
+          "trending": 7,
+          "recent_activity": 7
         },
-        "pool_size": 150,
+        "pool_size": 50,
         "ranker_blend": 0.5,
         "first_timer_popularity": false,
-        "trending_window_days": 30
+        "trending_window_days": 60
       },
-      "val_ndcg10": 0.037428180431715224
+      "val_ndcg10": 0.07532504669852934
     },
     {
       "stage": "blend_first_timer",
       "config": {
         "quotas": {
-          "collaborative": 80,
-          "content": 17,
-          "fbt": 17,
-          "trending": 17,
-          "recent_activity": 17
+          "collaborative": 20,
+          "content": 7,
+          "fbt": 7,
+          "trending": 7,
+          "recent_activity": 7
         },
-        "pool_size": 150,
+        "pool_size": 50,
         "ranker_blend": 0.75,
         "first_timer_popularity": true,
-        "trending_window_days": 30
+        "trending_window_days": 60
       },
-      "val_ndcg10": 0.03806202319855166
+      "val_ndcg10": 0.07595206697477856
     },
     {
       "stage": "blend_first_timer",
       "config": {
         "quotas": {
-          "collaborative": 80,
-          "content": 17,
-          "fbt": 17,
-          "trending": 17,
-          "recent_activity": 17
+          "collaborative": 20,
+          "content": 7,
+          "fbt": 7,
+          "trending": 7,
+          "recent_activity": 7
         },
-        "pool_size": 150,
+        "pool_size": 50,
         "ranker_blend": 0.75,
         "first_timer_popularity": false,
-        "trending_window_days": 30
+        "trending_window_days": 60
       },
-      "val_ndcg10": 0.03862851238270223
+      "val_ndcg10": 0.07783104017971469
     },
     {
       "stage": "blend_first_timer",
       "config": {
         "quotas": {
-          "collaborative": 80,
-          "content": 17,
-          "fbt": 17,
-          "trending": 17,
-          "recent_activity": 17
+          "collaborative": 20,
+          "content": 7,
+          "fbt": 7,
+          "trending": 7,
+          "recent_activity": 7
         },
-        "pool_size": 150,
+        "pool_size": 50,
         "ranker_blend": 1.0,
         "first_timer_popularity": true,
-        "trending_window_days": 30
+        "trending_window_days": 60
       },
-      "val_ndcg10": 0.03669231444590812
+      "val_ndcg10": 0.07657714765387251
     },
     {
       "stage": "blend_first_timer",
       "config": {
         "quotas": {
-          "collaborative": 80,
-          "content": 17,
-          "fbt": 17,
-          "trending": 17,
-          "recent_activity": 17
+          "collaborative": 20,
+          "content": 7,
+          "fbt": 7,
+          "trending": 7,
+          "recent_activity": 7
         },
-        "pool_size": 150,
+        "pool_size": 50,
         "ranker_blend": 1.0,
         "first_timer_popularity": false,
-        "trending_window_days": 30
+        "trending_window_days": 60
       },
-      "val_ndcg10": 0.03728856330144004
+      "val_ndcg10": 0.07766437826571619
     }
   ]
 }

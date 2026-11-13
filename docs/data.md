@@ -1,27 +1,46 @@
 # Data
 
-The generated practice warehouse, its validation, and where the storefront saves activity.
+Where the shop's data comes from, how it is checked, and where the storefront saves live activity.
 
-## Data and architecture
+## Where the data comes from
 
-### What is in the generated practice data?
+The shop's history (22 months from 1 January 2025: catalogue, customers, browsing, impressions,
+orders, stock, prices, sale events, marketing, reviews, support) comes from the
+[ecommerce-simulator](https://github.com/Meetpanchal58/ecommerce-simulator) package. Its nightly
+GitHub Action adds the new day and publishes the data (GitHub release `data-latest`, mirrored on
+Hugging Face `Meet58/ecommerce-simulator`). `python prepare_data.py [--size small|medium|full|large]`
+downloads it and converts it:
 
-| Table or files | In everyday language |
+| Pantree table (`data/`) | Built from (`data/source/`) |
 |---|---|
-| `customer_master`, `product_master`, `seller_master`, `agent_master` | Basic details about shoppers, products, sellers, and support staff. |
-| `orders`, `transactions` | Orders and the products inside each order. |
-| `clickstream` | The generated activity diary: visits, searches, product views, carts, and purchases. |
-| `inventory` | How many units were available for each product over time. |
-| `returns`, `product_reviews`, `support_contacts` | Example returns, customer reviews, and support requests. |
-| `marketing_spend`, `mmm_weekly_target` | Example marketing costs and weekly sales totals. |
-| `product_affinity` | Pairs of products often bought or viewed together. |
-| `customer_monthly_features`, `customer_churn_labels` | Monthly customer summaries and whether a customer later stopped buying. |
+| `product_master` | `product_master` (style level) + current price from `price_history` + published `product_reviews` (products nobody reviewed have no rating) |
+| `customer_master` | `customers` (the PII stays in `customer_pii`, which Pantree does not use) |
+| `transactions`, `orders` | `sales`, one row per order line; exchange replacement lines are left out |
+| `clickstream` | `clickstream`, product interactions only (views, cart, wishlist, purchases) |
+| `inventory` | `inventory_history` (per size, on days stock changed) → closing stock per product per day; the last day equals `inventory_live` |
 
-`data/metrics.json` explains how the project calculates its main measurements.
+**What counts as a purchase.** The recommender counts an order line unless its status is RTO,
+cancelled (CIC), lost or undelivered, and only when payment succeeded. The package's statuses map
+onto that: delivered and returned items are purchases (a returned item still shows interest);
+cancellations, returns to origin, lost and undelivered parcels are not. COD orders still on their
+way have no payment yet and do not count.
+
+## Checks
+
+- The package checks every published day: unique keys and references, the order lifecycle in
+  time order, nothing before sign-up or launch, money adding up, prices matching `price_history`,
+  stock flows balancing, receipts matching purchase orders, and more (16 checks).
+- `tests/test_ground_truth_guard.py`: the recommender and the web app never read the simulator's
+  ground truth (`_ground_truth/`, the taste model, the complement table, `product_affinity`); only
+  the evaluation's oracle reads the true taste.
+- The notebook checks that the package's ready-made churn features use only data from before each
+  snapshot (0 leaky rows) before using them.
+
+## Live data
 
 ### Customer data and personal information
 
-Customer data is split into two SQLite tables joined by `customer_id`:
+Customer data is split into two live-database tables joined by `customer_id`:
 
 | Table | Holds | Copied to DuckDB analytics? |
 |---|---|---|
@@ -36,7 +55,7 @@ whether it is registered; the OTP rate limits (applied before that check) thrott
 
 ### Where shopping activity is saved
 
-The shop database, `webapp\pantree_app.db`, is the main live database. The table below describes
+The live database (Postgres when `DATABASE_URL` is set, otherwise `webapp\pantree_app.db`) is the shop's source of truth. The table below describes
 what Pantree currently records. It records these meaningful shop actions, not every mouse movement
 or time spent on a page.
 
@@ -61,14 +80,14 @@ or time spent on a page.
 `clickstream` is Pantree's activity diary: one row per recorded event, with a customer, session,
 time, action, and (when relevant) product or search text. The current cart and wishlist tables
 store the shopper's latest selections; they are not a full history of every change.
-To look at the records yourself, open `webapp\pantree_app.db` with a SQLite viewer and browse
-the table named in the right-hand column above. Search phrases are saved in `clickstream`, so
+To look at the records yourself, open the live database (a SQLite viewer locally, or the Neon SQL editor
+when hosted) and browse the table named in the right-hand column above. Search phrases are saved in `clickstream`, so
 avoid entering private information into the shop's search box.
 
 Pantree also copies selected live changes—customers, events, orders, transactions, inventory,
 returns, and stock movements—to `webapp\pantree_analytics.duckdb`. That copy is for reports and
-analysis. SQLite remains the live shop's source of truth. The generated Parquet files in `data`
-are the starting practice dataset; they are not rewritten every time someone uses the shop.
+analysis. The live database remains the shop's source of truth. The Parquet files in `data` are the
+shop's simulated history; they are not rewritten when someone uses the shop.
 
 Recommendations are logged separately so they can be measured (see
 [Measuring recommendations on the live site](recommender.md#measuring-recommendations-on-the-live-site)):
@@ -78,47 +97,32 @@ of the card is on screen, and opening it adds a row to `recommendation_clicks`.
 ### Architecture
 
 ```
-                         ┌─────────────────────────────┐
-   product_details.csv → │   Stateful Simulator         │  python generate_data.py
-   (real fashion seed)   │   (initialize / increment)   │
-                         └──────────────┬──────────────┘
-                                        │ writes
-                                        ▼
-                         ┌─────────────────────────────┐
-                         │   Warehouse (Parquet)        │  masters, orders, transactions,
-                         │   dimensional + fact tables  │  clickstream, inventory, returns,
-                         └──────┬───────────────┬───────┘  reviews, support, marketing, MMM,
-                                │               │          monthly features, churn labels
-                     seeds ▼    │               │  reads ▼
-             ┌──────────────────┐               └────────────────────────────┐
-             │  Storefront app  │  writes live                                │
-             │  FastAPI + SQLite│ ───────────► SQLite (OLTP, source of truth) │
-             │  (login→checkout)│              analytics_sync.py               │
-             └──────────────────┘ ───────────► DuckDB (OLAP mirror) ──────────┘ → ML / LLM projects
+   ecommerce-simulator (nightly)        python prepare_data.py
+   GitHub release / Hugging Face  ───►  data/source  ──►  data/*.parquet
+                                              │                 │
+                       analysis notebook ◄────┘                 │ trains / serves
+                                                                ▼
+   visitors ──► Storefront (FastAPI) ──► live database ──► recommender (ALS, content, FBT,
+                   seed_db.py ▲          Postgres / SQLite   trending → LightGBM ranker)
+                              └── catalogue, customers,  │
+                                  stock from data/       └──► DuckDB analytics mirror
 ```
 
-- **SQLite** is the transactional store the website writes to (carts, orders, clickstream, inventory).
-- **DuckDB** mirrors it for fast analytics and model training (`ATTACH` the SQLite file, or query the partitioned Parquet facts).
+## Words you may see
 
-## Validation
-- `validators/validate_dataset.py` — cross-table integrity, temporal order, funnel ordering,
-  reconciliation, no-sale-before-launch, and churn-leakage checks, including a point-in-time check
-  that every churn feature row counts only orders before its `snapshot_date` (added after this
-  check would have caught a real leak; see Data analysis).
-- `validators/preflight_checks.py` — the above **plus** a churn model-readiness smoke test
-  (base rate + AUC band + top-decile lift), so labels can't silently drift to an unmodelable
-  rate. It uses a random split as a quick smoke test; the notebook's churn model uses a temporal
-  split with an embargo.
-- The evaluation's oracle depends on `generators/taste.py`, the simulator's own scoring function;
-  regenerating with the default seed reproduces `transactions.parquet` byte for byte.
+| Word | Meaning |
+|---|---|
+| Parquet | A compact file format used for the tables in `data`. |
+| Postgres / SQLite | The live database: Postgres (Neon) when hosted, a SQLite file locally. |
+| DuckDB | A separate copy of live data for analysis. |
+| OTP | A one-time sign-in code sent to your email or phone. |
+| Cold start | A shopper or product with too little history to personalise recommendations yet. |
+| Candidate | A product considered as a possible recommendation before ranking. |
+| ALS / FAISS | Collaborative filtering on views, carts and purchases / fast search for similar product descriptions. |
 
 ## Data analysis
 
-`analysis/pantree_insights.ipynb` explores the generated warehouse with charts; rebuild it with
-`pip install -r requirements-analysis.txt` then `python analysis/build_notebook.py`.
-
-The findings (generated from `analysis/insights_summary.json`) are listed in the
+`analysis/insights.ipynb` explores the shop's data with charts; re-run it with
+`pip install -r requirements-analysis.txt` then `jupyter execute --inplace analysis/insights.ipynb`. The findings
+(generated from `recommendations/reports/insights_summary.json`) are listed in the
 [README](../README.md#analytics-and-churn).
-
-The generated warehouse can also support RFM, customer lifetime value, churn (labels included)
-and marketing-mix projects.

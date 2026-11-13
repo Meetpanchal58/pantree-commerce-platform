@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from supertokens_python.exceptions import SuperTokensError
 from supertokens_python.recipe.session.exceptions import TryRefreshTokenError
 
-from webapp import core
+from webapp import core, database
 from webapp.core import (
     DB,
     TENANT_ID,
@@ -73,16 +73,17 @@ if static_dir.exists():
 
 @app.get("/healthz")
 def healthcheck():
-    if not DB.is_file():
+    if not database.database_url() and not DB.is_file():
         return JSONResponse({"status": "not_ready"}, status_code=503)
-    con = sqlite3.connect(DB, timeout=2)
     try:
-        tables = {
-            row[0]
-            for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        }
-    finally:
-        con.close()
+        con = database.connect(DB, timeout=2)
+        try:
+            tables = database.table_names(con)
+        finally:
+            con.close()
+    except Exception:
+        logger.exception("Health check could not reach the database")
+        return JSONResponse({"status": "not_ready"}, status_code=503)
     required_tables = {"customers", "cart", "orders", "transactions"}
     if not required_tables.issubset(tables):
         return JSONResponse({"status": "not_ready"}, status_code=503)

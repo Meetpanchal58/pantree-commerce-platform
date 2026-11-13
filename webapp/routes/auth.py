@@ -23,7 +23,10 @@ from ..core import (
     _log_otp_delivery_failure,
     _normalize_login_identifier,
     base_ctx,
+    database,
     db,
+    forget_customer_activity,
+    reset_customer_activity,
     delivery_channel_configured,
     ensure_auth_tables,
     get_session,
@@ -364,7 +367,8 @@ async def signup_otp_request(request: Request):
 
         def remember_signup(result):
             con.execute(
-                "INSERT OR REPLACE INTO pending_signups (device_id, payload, created_at) VALUES (?, ?, ?)",
+                """INSERT INTO pending_signups (device_id, payload, created_at) VALUES (?, ?, ?)
+                   ON CONFLICT(device_id) DO UPDATE SET payload=excluded.payload, created_at=excluded.created_at""",
                 (result.device_id, json.dumps({**details, "accepted_terms_at": now()}), time.time()),
             )
             con.commit()
@@ -513,7 +517,7 @@ def _customer_for_verified_identity(con, user_id, email, phone, signup=None):
             "account_status": "active",
             "terms_accepted_at": signup.get("accepted_terms_at") or created,
         }
-        existing_columns = {row[1] for row in con.execute("PRAGMA table_info(customers)")}
+        existing_columns = set(database.table_columns(con, "customers"))
         columns = [c for c in dim_row if c in existing_columns]
         con.execute(
             f"INSERT INTO customers ({', '.join(columns)}) VALUES ({', '.join('?' for _ in columns)})",
@@ -663,7 +667,7 @@ async def login_otp_verify(
             },
             status_code=409,
         )
-    except (SuperTokensError, ValueError, sqlite3.IntegrityError) as exc:
+    except (SuperTokensError, ValueError, *database.IntegrityError) as exc:
         con.rollback()
         logger.error(
             "Could not finish Pantree account sign-in (error_type=%s)",
@@ -708,7 +712,7 @@ async def logout(request: Request):
 
 
 @router.get("/account", response_class=HTMLResponse)
-def account_page(request: Request, sid: str = Cookie(None)):
+def account_page(request: Request, sid: str = Cookie(None), msg: str = ""):
     con = db()
     s = get_session(con, sid)
     if not s:
@@ -723,11 +727,34 @@ def account_page(request: Request, sid: str = Cookie(None)):
     orders = con.execute(
         """SELECT o.*, t.ship_address_line1, t.ship_address_line2,
         t.ship_city, t.ship_state, t.ship_region, t.ship_postal_code, t.ship_country
-        FROM orders o LEFT JOIN transactions t ON t.order_id=o.order_id
-        WHERE o.customer_id=? GROUP BY o.order_id ORDER BY o.order_timestamp DESC""",
+        FROM orders o LEFT JOIN transactions t ON t.transaction_id = (
+            SELECT MIN(t2.transaction_id) FROM transactions t2 WHERE t2.order_id = o.order_id)
+        WHERE o.customer_id=? ORDER BY o.order_timestamp DESC""",
         (s["customer_id"],),
     ).fetchall()
     ctx = base_ctx(con, s, request, cats=_departments(con), title="Your account")
-    ctx.update({"customer": customer, "orders": orders})
+    ctx.update({"customer": customer, "orders": orders, "msg": msg})
     con.close()
     return tpl.TemplateResponse(request, "account.html", ctx)
+
+
+@router.post("/account/reset-recommendations")
+def reset_recommendations(sid: str = Cookie(None)):
+    """Delete this customer's activity (keeps the account and login) and start fresh."""
+    con = db()
+    try:
+        s = get_session(con, sid)
+        if not s:
+            return RedirectResponse("/login", status_code=303)
+        customer_id = s["customer_id"]
+        reset_customer_activity(con, customer_id, keep_session_id=sid, now=now(), new_id=uid)
+        con.commit()
+    except Exception:
+        con.rollback()
+        logger.exception("Account reset failed")
+        return RedirectResponse("/account?msg=Could+not+reset+your+recommendations.+Please+try+again.", status_code=303)
+    finally:
+        con.close()
+    forget_customer_activity(customer_id)
+    logger.info("Customer reset their recommendations")
+    return RedirectResponse("/account?msg=Your+recommendations+were+reset.", status_code=303)
