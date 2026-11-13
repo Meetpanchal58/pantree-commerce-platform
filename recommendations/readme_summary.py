@@ -69,11 +69,8 @@ def build(report: dict) -> str:
         f"{rel['value']:+.0%} relative (95% CI {rel['ci_low']:+.0%} to {rel['ci_high']:+.0%}); "
         f"{served / random:.1f}× random. Within lists that contain a bought product "
         f"({oc['ranking_only_orders']:,} orders), NDCG@10 is {ranking['orderings']['segment_aware']['@10']['ndcg']:.3f}.",
-        f"- **Ceiling:** the served policy captures {pct(gap['value'], 0)} of the achievable gain from random to an oracle "
-        f"that knows each customer's true taste (95% CI {pct(gap['ci_low'], 0)} to {pct(gap['ci_high'], 0)}).",
-        f"- **Bottleneck:** candidate lists contain a bought product for {pct(ceiling['candidate_list_hit_rate'])} of orders; "
-        f"the top {ceiling['k']} by true taste would contain one for {pct(ceiling['hit_rate'])}. Next step: better "
-        "retrieval (taste-aware candidate generation, e.g. a two-tower model), not more ranking features.",
+        f"- **Oracle:** {oracle_lines(report)[0]}",
+        f"- **Bottleneck:** {oracle_lines(report)[1]}",
         "- **Caveat:** synthetic data with known ground truth; online impression/click logging and an A/B split are "
         "built, but there is no real traffic yet.",
     ]
@@ -151,6 +148,38 @@ def build_eval(report: dict) -> str:
     return "\n".join(lines)
 
 
+def oracle_lines(report: dict) -> tuple[str, str]:
+    """The oracle and bottleneck sentences, worded for what the numbers actually show.
+
+    The oracle ranks by each customer's true taste. In a shop where purchases also follow
+    popularity, page position, stock and sales, a model can beat it, so it is a ceiling only
+    when it actually scores higher."""
+    e2e = report["results"]["end_to_end"]
+    ndcg = lambda seg, o: e2e[seg]["orderings"][o]["@10"]["ndcg"]
+    served, oracle = ndcg("all", "segment_aware"), ndcg("all", "oracle")
+    gap = report["gap_closed_ndcg10"]["end_to_end"]["all"]["segment_aware"]
+    ceiling = report["retrieval_ceiling"]
+    if served < oracle:
+        oracle_text = (f"the served policy captures {gap['value']:.0%} of the achievable gain from random to an oracle "
+                       f"that knows each customer's true taste (95% CI {gap['ci_low']:.0%} to {gap['ci_high']:.0%}).")
+    else:
+        oracle_text = (f"the served policy matches an oracle that ranks by each customer's true taste alone "
+                       f"(NDCG@10 {served:.4f} vs {oracle:.4f}): shoppers here also follow popularity, page position, "
+                       "stock and sales, so taste alone is not a ceiling. For first-time buyers, where the model knows "
+                       f"little, the oracle is still ahead ({ndcg('first_order', 'segment_aware'):.3f} vs "
+                       f"{ndcg('first_order', 'oracle'):.3f}).")
+    if ceiling["hit_rate"] > ceiling["candidate_list_hit_rate"]:
+        bottleneck = (f"candidate lists contain a bought product for {ceiling['candidate_list_hit_rate']:.1%} of orders; "
+                      f"the top {ceiling['k']} by true taste would contain one for {ceiling['hit_rate']:.1%}. Next step: "
+                      "better retrieval (taste-aware candidate generation, e.g. a two-tower model), not more ranking features.")
+    else:
+        bottleneck = (f"only {ceiling['candidate_list_hit_rate']:.1%} of orders have a bought product anywhere in the "
+                      f"{ceiling['k']}-product candidate list, so retrieval caps the score (the ranker cannot recover a "
+                      "product that was never retrieved). Next step: better candidate generation, e.g. a two-tower "
+                      "retriever trained on views, impressions and orders.")
+    return oracle_text, bottleneck
+
+
 def catalog_size() -> int:
     """Number of products in the catalogue the evaluation ran on."""
     import pyarrow.parquet as pq
@@ -218,10 +247,12 @@ def build_tldr(report: dict) -> str:
         "for the home-page \"Recommended for you\" row: five retrieval sources → LightGBM LambdaRank, evaluated on "
         "real held-out orders with only data known one hour before each order.",
         f"- **Result:** the served policy reaches NDCG@10 {served:.4f}, {rel['value']:+.0%} over retrieval order "
-        f"({_ci(rel, '+.0%')}) and {served / random:.1f}× random, capturing {gap['value']:.0%} of the gap between random "
-        "and an oracle that knows each customer's true taste.",
-        f"- **Bottleneck:** candidate lists contain a bought product for {ceiling['candidate_list_hit_rate']:.1%} of orders "
-        f"vs {ceiling['hit_rate']:.1%} for the top {ceiling['k']} by true taste — retrieval, not ranking, limits the score.",
+        f"({_ci(rel, '+.0%')}) and {served / random:.1f}× random"
+        + (f", capturing {gap['value']:.0%} of the gap to an oracle that knows each customer's true taste."
+           if gap["value"] < 1 else
+           f", level with an oracle that ranks by true taste alone ({e2e['oracle']['@10']['ndcg']:.4f}): shoppers here "
+           "also follow popularity and page position."),
+        "- **Bottleneck:** " + oracle_lines(report)[1],
     ])
 
 
@@ -249,13 +280,16 @@ def build_next(report: dict) -> str:
     lines = [
         "*Generated from the evaluation and tuning reports by `python -m recommendations.readme_summary`.*", "",
         f"- **Improve candidate coverage.** The candidate list holds a bought product for "
-        f"{ceiling['candidate_list_hit_rate']:.1%} of test orders (recall {ret['pool_recall']:.3f}); the top "
-        f"{ceiling['k']} products by true taste would hold one for {ceiling['hit_rate']:.1%} (recall "
-        f"{ceiling['recall']:.3f}). Closing that gap (e.g. a two-tower retriever trained on views and orders) is worth "
-        "more than further ranking work.",
+        f"{ceiling['candidate_list_hit_rate']:.1%} of test orders (recall {ret['pool_recall']:.3f}); "
+        + (f"the top {ceiling['k']} products by true taste would hold one for {ceiling['hit_rate']:.1%} (recall "
+           f"{ceiling['recall']:.3f}). " if ceiling["hit_rate"] > ceiling["candidate_list_hit_rate"] else
+           "every order without one is a guaranteed miss. ")
+        + "A stronger retriever (e.g. a two-tower model trained on views, impressions and orders) is worth more "
+        "than further ranking work.",
     ]
     abl = (report.get("ablation_leave_one_source_out") or {}).get("recent_activity")
-    if abl:
+    # Only worth re-checking when dropping the source *raised* NDCG on test.
+    if abl and abl["ndcg10_change_vs_full"]["mean_diff"] > 0:
         c = abl["ndcg10_change_vs_full"]
         lines.append(
             f"- **Re-check the recent-activity source on validation.** In the test-period ablation, removing it moved "

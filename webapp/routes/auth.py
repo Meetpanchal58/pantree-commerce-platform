@@ -40,6 +40,7 @@ from ..core import (
     os,
     passwordless_async,
     re,
+    release_otp_request,
     reserve_otp_request,
     session_async,
     sqlite3,
@@ -131,6 +132,15 @@ def _channel_unavailable(channel):
     return JSONResponse({"ok": False, "message": message}, status_code=503)
 
 
+def _release_quietly(con, identifier):
+    """Give back the cooldown after a failed send; never let this hide the original error."""
+    try:
+        con.rollback()
+        release_otp_request(con, identifier)
+    except Exception:
+        logger.warning("Could not release the OTP cooldown after a failed send")
+
+
 async def _send_code(request, con, channel, normalized, precheck=None, after_create=None):
     """Rate-limit, run the account check, create a SuperTokens code and deliver it.
 
@@ -155,6 +165,7 @@ async def _send_code(request, con, channel, normalized, precheck=None, after_cre
         if precheck is not None:
             rejection = precheck()
             if rejection is not None:
+                release_otp_request(con, f"{channel}:{normalized}")  # no code sent: no cooldown
                 return rejection
         result = await passwordless_async.create_code(
             tenant_id=TENANT_ID,
@@ -173,6 +184,7 @@ async def _send_code(request, con, channel, normalized, precheck=None, after_cre
         httpx.HTTPError,
     ) as exc:
         _log_otp_delivery_failure("send", exc)
+        _release_quietly(con, f"{channel}:{normalized}")
         return JSONResponse(
             {
                 "ok": False,
@@ -184,6 +196,7 @@ async def _send_code(request, con, channel, normalized, precheck=None, after_cre
         if not _is_supertokens_core_error(exc):
             raise
         _log_otp_delivery_failure("send", exc)
+        _release_quietly(con, f"{channel}:{normalized}")
         return JSONResponse(
             {
                 "ok": False,

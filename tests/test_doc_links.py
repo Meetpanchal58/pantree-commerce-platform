@@ -69,8 +69,10 @@ class GeneratedBlockTests(unittest.TestCase):
         report = json.loads(readme_summary.REPORT.read_text())
         text = readme_summary.build_next(report)
         ceiling = report["retrieval_ceiling"]
-        self.assertIn(f"{ceiling['hit_rate']:.1%}", text)
         self.assertIn(f"{ceiling['candidate_list_hit_rate']:.1%}", text)
-        if report.get("ablation_leave_one_source_out", {}).get("recent_activity"):
+        if ceiling["hit_rate"] > ceiling["candidate_list_hit_rate"]:  # the taste ceiling is only quoted when higher
+            self.assertIn(f"{ceiling['hit_rate']:.1%}", text)
+        abl = report.get("ablation_leave_one_source_out", {}).get("recent_activity")
+        if abl and abl["ndcg10_change_vs_full"]["mean_diff"] > 0:
             self.assertIn("recent-activity", text)
         self.assertIn("NDCG@10", readme_summary.build_tldr(report))
