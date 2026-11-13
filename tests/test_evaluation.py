@@ -170,18 +170,22 @@ class SegmentAwarePolicyTests(unittest.TestCase):
 class OracleTests(unittest.TestCase):
     def _fixture(self):
         from recommendations.evaluate import oracle_scores
+        from recommendations.oracle import TasteCatalog
 
-        catalog = pd.DataFrame(
+        products = pd.DataFrame(
             [
-                ("match", "Apparel", "Tshirts", "Black", "Casual", 4.5, 800.0),
-                ("half", "Apparel", "Jeans", "Blue", "Casual", 4.0, 1200.0),
-                ("miss", "Footwear", "Heels", "Red", "Formal", 3.5, 4000.0),
-                ("miss2", "Accessories", "Watches", "Red", "Formal", 3.0, 9000.0),
+                ("match", "Apparel", "Tshirts", "Black", "Casual", "Men", "Summer", 0.5, 800.0),
+                ("half", "Apparel", "Jeans", "Blue", "Casual", "Men", "Fall", 0.0, 1200.0),
+                ("miss", "Footwear", "Heels", "Red", "Formal", "Women", "Fall", 0.0, 4000.0),
+                ("miss2", "Accessories", "Watches", "Red", "Formal", "Women", "Winter", -0.5, 9000.0),
             ],
-            columns=["product_id", "h1_category", "h3_category", "h4_colour", "usage", "avg_rating", "current_price"],
-        ).set_index("product_id", drop=False)
+            columns=["product_id", "category", "article_type", "colour", "usage", "gender", "season", "quality", "mrp"],
+        ).assign(launch_date="2025-01-01", discontinue_date=None)
+        prices = pd.DataFrame({"product_id": ["match"], "valid_from": [pd.Timestamp("2026-02-01")],
+                               "valid_to": [pd.NaT], "selling_price": [699.0]})
+        catalog = TasteCatalog(products, prices)
         profiles = pd.DataFrame(
-            [{"customer_id": "c1", "category_focus": "Apparel", "colour_focus": "Black",
+            [{"customer_id": "c1", "gender": "M", "category_focus": "Apparel", "colour_focus": "Black",
               "preferred_usage": "Casual", "price_sensitivity": 0.8}]
         ).set_index("customer_id")
         frame = pd.DataFrame({
@@ -189,7 +193,7 @@ class OracleTests(unittest.TestCase):
             "event_timestamp": pd.Timestamp("2026-03-01 12:00"),
             "product_id": ["miss2", "miss", "half", "match"], "label": [0, 0, 0, 1],
         })
-        frame["oracle"] = oracle_scores(frame, profiles, catalog, float(catalog["current_price"].median()))
+        frame["oracle"] = oracle_scores(frame, profiles, catalog)
         return frame, profiles, catalog
 
     def test_oracle_ranks_the_true_favourite_first_and_beats_random(self):
@@ -201,17 +205,13 @@ class OracleTests(unittest.TestCase):
         self.assertGreaterEqual(oracle_ndcg, random_ndcg)
         self.assertEqual(oracle_ndcg, 1.0)
 
-    def test_true_taste_score_is_deterministic(self):
-        from generators.taste import true_taste_score
-
+    def test_taste_uses_the_selling_price_of_the_day(self):
         _, profiles, catalog = self._fixture()
-        first = true_taste_score(profiles.loc["c1"], catalog, pd.Timestamp("2026-10-15"))
-        again = true_taste_score(profiles.loc["c1"], catalog, pd.Timestamp("2026-10-15"))
-        np.testing.assert_array_equal(first, again)
-        # Precomputed seasonal demand gives the identical result.
-        from generators.taste import product_demand_multiplier
-        demand = np.array([product_demand_multiplier(r, pd.Timestamp("2026-10-15")) for r in catalog.itertuples(index=False)])
-        np.testing.assert_array_equal(first, true_taste_score(profiles.loc["c1"], catalog, pd.Timestamp("2026-10-15"), demand=demand))
+        profile, match = profiles.loc["c1"].to_dict(), np.array([0])
+        before = catalog.scores(profile, match, pd.Timestamp("2026-01-15"))  # list price 800
+        after = catalog.scores(profile, match, pd.Timestamp("2026-02-15"))   # sale price 699
+        self.assertGreater(after[0], before[0])  # cheaper -> more attractive to a price-sensitive shopper
+        np.testing.assert_array_equal(after, catalog.scores(profile, match, pd.Timestamp("2026-02-15")))
 
     def test_gap_closed_is_zero_for_random_and_one_for_oracle(self):
         from recommendations.evaluate import gap_closed_bootstrap

@@ -18,10 +18,15 @@ Hosted on Render's free tier; the first request after inactivity may take 30-60 
 ## The problem
 
 An online fashion shop wants its home-page "Recommended for you" row to show products each
-signed-in shopper will actually buy. The task here is the hard version: out of 10,000 products,
-put the exact products a customer bought near the top of the row, using only what was known one
-hour before the order. Everything runs on a simulated store whose customers have a hidden "true
-taste", so the evaluation can also say how close the system gets to perfect knowledge.
+signed-in shopper will actually buy. The task here is the hard version: out of thousands of
+products, put the exact products a customer bought near the top of the row, using only what was
+known one hour before the order.
+
+The shop's history (22 months: catalogue, customers, browsing, impressions, orders, stock, sale
+events, marketing) comes from my [ecommerce-simulator](https://github.com/Meetpanchal58/ecommerce-simulator)
+package, refreshed every night ([Hugging Face](https://huggingface.co/datasets/Meet58/ecommerce-simulator)).
+Its customers have a hidden "true taste", so the evaluation can also say how close the system gets
+to perfect knowledge.
 
 <!-- RESULTS:START -->
 ## Results at a glance
@@ -44,7 +49,7 @@ Full tables by segment, significance tests, retrieval figures and the source abl
 
 ```mermaid
 flowchart LR
-    G["Stateful simulator<br/>(customers with hidden taste)"] --> W[("Parquet warehouse<br/>orders, clickstream,<br/>inventory, catalog")]
+    G["ecommerce-simulator package<br/>(nightly; customers with hidden taste)"] -->|prepare_data.py| W[("Parquet tables<br/>orders, clickstream,<br/>inventory, catalog")]
     W --> S1["ALS<br/>(implicit feedback)"]
     W --> S2["Content similarity<br/>(MiniLM + FAISS)"]
     W --> S3["Co-purchase"]
@@ -53,7 +58,7 @@ flowchart LR
     S1 & S2 & S3 & S4 & S5 --> P["Candidate builder<br/>quotas, dedup,<br/>stock / launch filter"]
     P --> R["LightGBM LambdaRank<br/>11 features"]
     R --> B["Blend with retrieval score<br/>(settings chosen on validation)"]
-    B --> UI["Storefront row<br/>+ impression / click logging"]
+    B --> UI["Storefront row<br/>+ impression / click logging<br/>(live data in Postgres)"]
     B --> E["Offline evaluation<br/>same code path"]
 ```
 
@@ -76,15 +81,16 @@ storefront row works: [docs/recommender.md](docs/recommender.md).
 - **Baselines and a ceiling.** Random, popularity and retrieval order are scored on the same lists,
   plus an oracle that knows each customer's true taste. Differences come with paired-bootstrap 95%
   confidence intervals.
-- **Validated data.** `validators/preflight_checks.py` runs the dataset consistency checks on the
-  generated warehouse; CI runs it and the test suite on every push.
+- **Validated data.** The package checks every published day (16 consistency checks: keys,
+  lifecycle order, money, prices, stock flows); CI downloads the small shop and runs the test
+  suite, including the storefront journey on a real Postgres, on every push.
 
 Details: [docs/evaluation.md](docs/evaluation.md).
 
 ## Analytics and churn
 
-`analysis/pantree_insights.ipynb` explores the generated warehouse (rebuild it with
-`python analysis/build_notebook.py`). Findings on the default dataset:
+`analysis/pantree_insights.ipynb` explores the shop's data (rebuild it with
+`python analysis/build_notebook.py`). Findings on the full shop:
 
 <!-- INSIGHTS:START -->
 *Generated from `analysis/insights_summary.json`, written when the notebook runs.*
@@ -109,13 +115,14 @@ Details: [docs/evaluation.md](docs/evaluation.md).
 
 - This is **realistic synthetic data** with deliberately engineered, documented signal — it is
   validated and leakage-checked, but it is simulated, not production data.
-- Browsing in the simulator follows each customer's hidden taste with 20% exploration, so views
-  and cart adds carry preference signal; the strength of that signal is a modelling choice.
+- Browsing in the simulator follows each customer's hidden taste (with position bias and
+  exploration), so views and cart adds carry preference signal; the strength of that signal is a
+  modelling choice.
 - The headline evaluation is an offline replay on historical orders. The site now logs
   recommendation impressions and clicks and supports an A/B split, but those numbers need real
   traffic, which the demo does not have yet.
-- Product images source from a real fashion catalogue (`generators/product_details.csv`);
-  for the live site, images are served locally so they always load.
+- Products come from a real public fashion catalogue (Kaggle *Fashion Product Images*), so names
+  and images are real; prices, customers and behaviour are simulated.
 - The served settings were chosen on a single validation period; the margins between the best few
   settings are small, so a different period could pick differently.
 
@@ -136,34 +143,32 @@ Python 3.11+ (CI uses 3.13). From the project folder:
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-python generate_data.py --mode initialize      # simulated warehouse in data/ (replaces existing files)
-python validators/preflight_checks.py          # consistency checks
+python prepare_data.py                         # download the shop's data (about a minute; --size small for laptops)
 python -m recommendations.tune_als             # ALS settings (validation period)
 python -m recommendations.tune_policy          # quotas, pool size, blend, first-timer rule, trending window
 python -m recommendations.evaluate             # test-period evaluation + ablation
 python -m recommendations.readme_summary       # regenerate the numbers in this README and docs/evaluation.md
-python webapp/seed_db.py                       # storefront database
+python webapp/seed_db.py                       # storefront database (SQLite, or Postgres if DATABASE_URL is set)
 python -m uvicorn webapp.app:app --host 127.0.0.1 --port 8000
 ```
 
-Sign-in setup (SuperTokens, email or phone codes), Windows commands and dataset sizing:
-[docs/running.md](docs/running.md). Hosting: [docs/deployment.md](docs/deployment.md).
+Sign-in setup (SuperTokens, email or phone codes) and Windows commands: [docs/running.md](docs/running.md).
+Hosting, the Postgres live database and "Reset my recommendations": [docs/deployment.md](docs/deployment.md).
 
 ## Repository map
 
 | Path | What it holds |
 |---|---|
-| `generators/` | Stateful simulator: customers, catalog, browsing, orders, inventory, marketing, support |
-| `validators/` | Dataset checks (`preflight_checks.py` runs them all) |
+| `prepare_data.py` | Downloads the shop's data from the ecommerce-simulator package and converts it |
 | `recommendations/candidates/` | Retrieval sources: ALS, content (FAISS), co-purchase / FBT, popularity |
 | `recommendations/policy.py` | The personalised policy shared by serving and evaluation |
 | `recommendations/ranker.py` | Point-in-time features and the LightGBM ranker |
 | `recommendations/evaluate.py`, `tune_als.py`, `tune_policy.py` | Offline evaluation and tuning |
 | `recommendations/oracle.py` | Evaluation-only oracle and retrieval ceiling |
 | `recommendations/reports/` | Generated reports and the chosen settings |
-| `webapp/` | FastAPI storefront, sign-in, recommendation logging |
+| `webapp/` | FastAPI storefront, sign-in, live database (Postgres / SQLite), recommendation logging, account reset |
 | `analysis/` | Insights notebook and churn analysis |
-| `docs/` | [Recommender](docs/recommender.md), [evaluation](docs/evaluation.md), [data](docs/data.md), [running](docs/running.md), [deployment](docs/deployment.md), [glossary](docs/glossary.md) |
+| `docs/` | [Recommender](docs/recommender.md), [evaluation](docs/evaluation.md), [data](docs/data.md), [running](docs/running.md), [deployment](docs/deployment.md) |
 | `tests/` | Unit, parity, leakage and guard tests |
 
 ## License

@@ -37,7 +37,7 @@ def _reset_pools():
     core._SCHEMA_CHECKED.clear()
 
 
-@unittest.skipUnless(HAS_DATA, "needs generated data (python generate_data.py --mode initialize)")
+@unittest.skipUnless(HAS_DATA, "needs the shop data (python prepare_data.py)")
 class JourneyMixin:
     backend = "sqlite"
 
@@ -210,6 +210,22 @@ class SQLiteJourneyTests(JourneyMixin, unittest.TestCase):
 @unittest.skipUnless(PG_URL, "set PANTREE_TEST_DATABASE_URL to run against Postgres")
 class PostgresJourneyTests(JourneyMixin, unittest.TestCase):
     backend = "postgres"
+
+    def test_redeploy_keeps_activity_and_adds_new_products(self):
+        """A redeploy with refreshed data of the same shop keeps live activity and adds new rows."""
+        seed_db = importlib.import_module("seed_db")
+        self.client.post("/cart/add", data={"product_id": self.product_id, "qty": 1})
+        con = core.db()
+        newest = con.execute("SELECT product_id FROM products ORDER BY product_id DESC LIMIT 1").fetchone()[0]
+        con.execute("DELETE FROM inventory WHERE product_id=?", (newest,))
+        con.execute("DELETE FROM products WHERE product_id=?", (newest,))  # as if launched after the last deploy
+        con.commit()
+        con.close()
+        with patch.object(seed_db, "DB", Path(self.tmp.name) / "live.db"):
+            seed_db.main([])
+        self.assertEqual(self.count("SELECT COUNT(*) FROM products WHERE product_id=?", newest), 1)
+        self.assertEqual(self.count("SELECT COUNT(*) FROM inventory WHERE product_id=?", newest), 1)
+        self.assertEqual(self.count("SELECT COUNT(*) FROM cart WHERE customer_id=?", self.customer_id), 1)
 
 
 class TranslateTests(unittest.TestCase):

@@ -1,9 +1,8 @@
-# Generated data (regenerate with: python generate_data.py --mode initialize)
+# Downloaded data (get it with: python prepare_data.py)
 data/*.parquet
 data/*.json
-data/_state/
-data/_partitioned/
-data/README.txt
+data/source/
+data/_hf/
 
 # Live app databases (regenerate with: python webapp/seed_db.py)
 *.db

@@ -40,7 +40,7 @@
   <div class="pdp-copy">
     <div style="color:#565959;font-size:14px">{{ p.brand_name }}</div>
     <h1 style="font-size:24px;margin:4px 0">{{ p.product_name }}</h1>
-    <div class="rating" style="font-size:15px">{{ '★' * (p.avg_rating|round(0,'floor')|int) if p.avg_rating else '' }} {{ p.avg_rating }}</div>
+    <div class="rating" style="font-size:15px">{{ '★' * (p.avg_rating|round(0,'floor')|int) if p.avg_rating else '' }} {{ p.avg_rating if p.avg_rating else 'No ratings yet' }}</div>
     <hr style="margin:12px 0;border:none;border-top:1px solid #e3e6e6">
     <div class="pdp-price"><span class="price" style="font-size:28px">₹{{ '{:,.0f}'.format(p.current_price) }}</span>
          <span class="mrp">M.R.P: ₹{{ '{:,.0f}'.format(p.mrp) }}</span></div>

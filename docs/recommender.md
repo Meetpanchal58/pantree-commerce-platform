@@ -106,11 +106,8 @@ The offline evaluation replays history; the live site also records how shoppers 
   surface, source and variant, plus the A/B difference bootstrapped by customer (impressions from the
   same customer are not independent).
 
-To extend an initialized warehouse and explicitly grow the customer population, set
-`PANTREE_TODAY` to the desired end date and `PANTREE_INCREMENT_TARGET_CUSTOMERS` to the desired
-final customer count before running `python generate_data.py --mode increment`. Increment
-cohorts are distributed across the appended months; the target does not alter existing
-customers or products.
+To get newer data, run `python prepare_data.py` again: it downloads the latest published days
+(the package adds one every night).
 
 ### Recommendation code modules (for developers)
 

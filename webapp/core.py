@@ -104,7 +104,10 @@ load_dotenv(ROOT / ".env")
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from generators.config import GEO  # cities/states/regions for the sign-up form
+try:
+    from .geo import GEO  # cities/states/regions for the sign-up form
+except ImportError:
+    from geo import GEO
 
 from recommendations.serve import (
     recommend as ml_recommend,

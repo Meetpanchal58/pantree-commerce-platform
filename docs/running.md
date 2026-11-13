@@ -1,6 +1,6 @@
 # Running Pantree
 
-Install, generate the dataset, set up sign-in and start the shop. Hosting: [deployment.md](deployment.md).
+Install, get the data, set up sign-in and start the shop. Hosting: [deployment.md](deployment.md).
 
 ## How to run
 
@@ -25,38 +25,30 @@ py -3.11 -m venv .venv
 The recommendation packages include machine-learning libraries and can take a while to install.
 You only need to install them once for this environment.
 
-### 2. Create the practice dataset
+### 2. Get the shop's data
 
 From the same project folder, run:
 
 ```powershell
-.\.venv\Scripts\python.exe generate_data.py --mode initialize
-.\.venv\Scripts\python.exe validators\preflight_checks.py
+.\.venv\Scripts\python.exe prepare_data.py
 ```
 
-The first command creates the shop catalog, customers, shopping activity, orders, stock history,
-and other practice data in the `data` folder. The second checks that the generated files agree
-with each other. Read [the data folder guide](../data/README.md) for what is created.
-
-**Important:** `initialize` replaces the previously generated Parquet files and simulator state
-in `data`. Do not run it if you need to keep an existing generated dataset. To advance an existing
-dataset without starting over, use:
-
-```powershell
-.\.venv\Scripts\python.exe generate_data.py --mode increment
-```
+This downloads the shop's history (catalogue, customers, browsing, orders, stock and more, from
+1 January 2025 to yesterday) from the [ecommerce-simulator](https://github.com/Meetpanchal58/ecommerce-simulator)
+package, which refreshes it every night, and converts it for Pantree. It takes about a minute.
+Use `--size small` for a lighter shop on a laptop (`small`, `medium`, `full` (default) or
+`large`). Run the same command again later to get the latest days. See [data.md](data.md).
 
 ### 3. Create the storefront database
-
-Run this once, after generating the dataset:
 
 ```powershell
 .\.venv\Scripts\python.exe webapp\seed_db.py
 ```
 
-This loads products, customers, and starting stock into the live shop database at
-`webapp\pantree_app.db`. **Seeding replaces that database.** If it already contains shopping
-activity you want to keep, stop the app and back it up before running the seeder.
+This loads products, customers and starting stock into the live shop database. Locally that is
+the SQLite file `webapp\pantree_app.db`, which **seeding replaces**. With `DATABASE_URL` set to a
+Postgres database (as on the hosted site), it seeds only an empty database and keeps existing
+activity; `--reset` starts over.
 
 ### 4. Set up email or phone-code sign-in
 
@@ -168,31 +160,10 @@ Docker, launch the shop from the project folder with:
 Open `http://127.0.0.1:8000/login`. For the complete first-time steps, use
 [Start here: setup and use Pantree](#how-to-run) above.
 
-### Refreshing data over time (incremental)
+### Getting newer data
 
-This advances the generated practice data; it does not update the live shop database. The live
-shop's seeder replaces its database, so do not run it on a database with activity you want to
-keep. There is not currently a safe command that merges newly generated customers and products
-into an already-used shop database.
-
-```bash
-.\.venv\Scripts\python.exe generate_data.py --mode increment
-```
-
-## Change the dataset size (optional)
-
-The generator normally creates about 30,000 starting customers and 10,000 products. If you want
-a smaller or larger practice dataset, set these values in PowerShell before running
-`initialize`. Starting over replaces the generated files, so only do this when that is okay.
-
-```powershell
-$env:PANTREE_CUSTOMERS = "30000"
-$env:PANTREE_PRODUCTS = "10000"
-.\.venv\Scripts\python.exe generate_data.py --mode initialize
-```
-Change the two numbers to the starting customer and product counts you want. The default end
-date is today, and the random seed is fixed by default so the same settings produce repeatable
-practice data.
+`python prepare_data.py` always downloads the latest published days. It refreshes the files the
+recommender and the notebook read; it does not touch the live shop database.
 
 Sign-in internals (OTP flow, rate limits, sessions), production Docker Compose, backups and the
 pre-launch checklist are in [deployment.md](deployment.md).

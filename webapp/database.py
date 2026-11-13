@@ -106,13 +106,10 @@ def read_frame(con, sql: str, params=None):
     return pd.DataFrame([tuple(row) for row in cursor.fetchall()], columns=columns)
 
 
-def write_frame(con, name: str, frame) -> None:
-    """Replace table `name` with the rows of a DataFrame (used when seeding)."""
+def _postgres_frame(frame):
+    """Column types for Postgres, and values as plain Python objects (as pandas stores them in SQLite)."""
     import pandas as pd
 
-    if not is_postgres(con):
-        frame.to_sql(name, con, index=False, if_exists="replace")
-        return
     frame = frame.copy()
     types = {}
     for column in frame.columns:
@@ -131,7 +128,15 @@ def write_frame(con, name: str, frame) -> None:
         else:
             frame[column] = series.map(lambda v: v if v is None or isinstance(v, str) else str(v))
             types[column] = "TEXT"
-    frame = frame.astype(object).where(frame.notna(), None)
+    return frame.astype(object).where(frame.notna(), None), types
+
+
+def write_frame(con, name: str, frame) -> None:
+    """Replace table `name` with the rows of a DataFrame (used when seeding)."""
+    if not is_postgres(con):
+        frame.to_sql(name, con, index=False, if_exists="replace")
+        return
+    frame, types = _postgres_frame(frame)
     table = _identifier(name)
     columns = ", ".join(f"{_identifier(c)} {kind}" for c, kind in types.items())
     con.execute(f"DROP TABLE IF EXISTS {table}")
@@ -140,6 +145,25 @@ def write_frame(con, name: str, frame) -> None:
     with con.raw.cursor().copy(f"COPY {table} ({names}) FROM STDIN") as copy:
         for row in frame.itertuples(index=False, name=None):
             copy.write_row(row)
+
+
+def append_frame(con, name: str, frame) -> int:
+    """Insert DataFrame rows into an existing table (columns the table lacks are dropped)."""
+    if frame.empty:
+        return 0
+    existing = table_columns(con, name)
+    frame = frame[[c for c in frame.columns if c in existing]]
+    if is_postgres(con):
+        frame, _ = _postgres_frame(frame)
+    else:
+        frame = frame.astype(object).where(frame.notna(), None)
+        for column in frame.columns:
+            frame[column] = frame[column].map(lambda v: str(v) if hasattr(v, "isoformat") else v)
+    names = ", ".join(_identifier(c) for c in frame.columns)
+    marks = ", ".join("?" for _ in frame.columns)
+    con.executemany(f"INSERT INTO {_identifier(name)} ({names}) VALUES ({marks})",
+                    [tuple(row) for row in frame.itertuples(index=False, name=None)])
+    return len(frame)
 
 
 def _identifier(name: str) -> str:

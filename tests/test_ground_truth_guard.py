@@ -1,12 +1,11 @@
 """The recommender and the storefront must not read the simulator's ground truth.
 
-The simulator decides what customers buy from hidden inputs: each customer's true
-taste (generators.taste, data/_state/customer_profiles.parquet) and a hand-written
-table of complementary product types (generators.config.COMPLEMENTS). The
-generator's product_affinity table is built from COMPLEMENTS too. A model that
-reads any of these is being handed the answer, so only the evaluation-only
-oracle module (recommendations/oracle.py) may touch the taste inputs, and
-nothing may touch COMPLEMENTS or product_affinity.
+The simulator (the ecommerce-simulator package) decides what customers buy from hidden
+inputs: each customer's true taste (ecommerce_sim.taste, data/source/_ground_truth/) and
+a hand-written table of complementary product types (ecommerce_sim.reference.COMPLEMENTS).
+A model that reads any of these is being handed the answer, so only the evaluation-only
+oracle module (recommendations/oracle.py) may touch the taste inputs, nothing may touch
+COMPLEMENTS or product_affinity, and nothing else from the package is imported.
 """
 import ast
 import unittest
@@ -16,10 +15,13 @@ ROOT = Path(__file__).resolve().parents[1]
 SCANNED = ("recommendations", "webapp")
 ORACLE = Path("recommendations/oracle.py")
 
-TASTE_MODULE = "generators.taste"
-FORBIDDEN_CONFIG_NAMES = {"COMPLEMENTS"}
+PACKAGE = "ecommerce_sim"
+TASTE_MODULE = "ecommerce_sim.taste"
+ALLOWED_IMPORTS: dict = {}  # module -> names anyone may import (none: the web app keeps its own city list)
 FORBIDDEN_STRINGS = {
-    "customer_profiles": {ORACLE},
+    "_ground_truth": {ORACLE},
+    "customer_taste": {ORACLE},
+    "product_quality": {ORACLE},
     "product_affinity": set(),
     "COMPLEMENTS": set(),
 }
@@ -40,20 +42,20 @@ def file_violations(rel, tree):
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                if alias.name.startswith(TASTE_MODULE) and rel != ORACLE:
+                if alias.name.startswith(TASTE_MODULE) and rel == ORACLE:
+                    continue
+                if alias.name == PACKAGE or alias.name.startswith(PACKAGE + "."):
                     found.append(f"{rel}:{node.lineno} imports {alias.name}")
-                if alias.name == "generators.config":
-                    found.append(f"{rel}:{node.lineno} imports the whole generators.config")
         elif isinstance(node, ast.ImportFrom):
             module = node.module or ""
-            if module.startswith(TASTE_MODULE) and rel != ORACLE:
-                found.append(f"{rel}:{node.lineno} imports from {module}")
-            if module == "generators" and any(a.name in ("taste", "config") for a in node.names):
-                found.append(f"{rel}:{node.lineno} imports generators.taste/config as a module")
-            if module == "generators.config":
-                for alias in node.names:
-                    if alias.name in FORBIDDEN_CONFIG_NAMES or alias.name == "*":
-                        found.append(f"{rel}:{node.lineno} imports {alias.name} from generators.config")
+            if not (module == PACKAGE or module.startswith(PACKAGE + ".")):
+                continue
+            if module.startswith(TASTE_MODULE) and rel == ORACLE:
+                continue
+            allowed = ALLOWED_IMPORTS.get(module, set())
+            for alias in node.names:
+                if alias.name not in allowed:
+                    found.append(f"{rel}:{node.lineno} imports {alias.name} from {module}")
         elif isinstance(node, ast.Constant) and isinstance(node.value, str):
             for needle, allowed in FORBIDDEN_STRINGS.items():
                 if needle in node.value and rel not in allowed and not _is_docstring(tree, node):
@@ -76,16 +78,17 @@ class GroundTruthGuardTests(unittest.TestCase):
 
     def test_guard_catches_a_forbidden_import(self):
         source = (
-            "from generators.config import COMPLEMENTS\n"
-            "import generators.taste\n"
-            "PATH = 'data/product_affinity.parquet'\n"
-            "PROFILES = 'data/_state/customer_profiles.parquet'\n"
+            "from ecommerce_sim.reference import COMPLEMENTS\n"
+            "import ecommerce_sim.taste\n"
+            "PATH = 'data/source/derived/product_affinity.parquet'\n"
+            "PROFILES = 'data/source/_ground_truth/customer_taste.parquet'\n"
+            "from ecommerce_sim.reference import CITIES\n"
         )
         found = file_violations(Path("recommendations/candidates/x.py"), ast.parse(source))
-        self.assertEqual(len(found), 4, found)
-        # The oracle may read taste inputs, but never the complement table.
+        self.assertEqual(len(found), 6, found)  # COMPLEMENTS, taste, affinity, _ground_truth, customer_taste, CITIES
+        # The oracle may read taste inputs, but never the complement table or affinity.
         oracle_found = file_violations(ORACLE, ast.parse(source))
-        self.assertEqual(len(oracle_found), 2, oracle_found)
+        self.assertEqual(len(oracle_found), 3, oracle_found)  # COMPLEMENTS, affinity, CITIES
 
     def test_oracle_is_the_only_taste_reader(self):
         readers = {

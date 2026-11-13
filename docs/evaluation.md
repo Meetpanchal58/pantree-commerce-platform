@@ -91,10 +91,12 @@ Ranker features with the most gain: `n_sources` (23%), `retrieval_score` (21%), 
 ALS tuning (`python -m recommendations.tune_als`, chosen on the validation period with a 7-day embargo, checked once on the test period): 32 factors, regularisation 0.1, weights (view, cart, purchase) (1, 3, 5); held-out Recall@20 0.0900 with the previous serving settings → 0.0900. Serving and evaluation read these settings from `als_tuning.json`. Full grid: [`als_tuning.md`](../recommendations/reports/als_tuning.md).
 <!-- EVAL:END -->
 
-To reproduce: generate with `PANTREE_TODAY=2026-06-30`, then run `python -m recommendations.tune_als`,
-`python -m recommendations.evaluate` and `python -m recommendations.readme_summary` (which rewrites the
-generated blocks in this README). Absolute numbers are low because the task is predicting
-the exact product out of 10,000; compare orderings with each other, not with published benchmarks.
+To reproduce: `python prepare_data.py` (full shop), then `python -m recommendations.tune_als`,
+`python -m recommendations.tune_policy`, `python -m recommendations.evaluate` and
+`python -m recommendations.readme_summary` (which rewrites the generated blocks here and in the README).
+The data refreshes nightly, so a later download adds days and moves the numbers slightly. Absolute
+numbers are low because the task is predicting the exact product out of thousands; compare orderings
+with each other, not with published benchmarks.
 
 ## What counts as a purchase
 
@@ -145,11 +147,11 @@ after the query does not change availability.
 
 ## The simulator's ground truth is off limits
 
-The simulator decides purchases from hidden inputs: each customer's true taste
-(`generators/taste.py`, `data/_state/customer_profiles.parquet`) and a hand-written
-table of complementary product types (`generators.config.COMPLEMENTS`, which also
-shapes the generator's `product_affinity` table). A model that reads them is given
-the answer.
+The simulator (the ecommerce-simulator package) decides clicks and purchases from hidden
+inputs: each customer's true taste (`ecommerce_sim.taste`,
+`data/source/_ground_truth/customer_taste.parquet`, product quality in
+`_ground_truth/product_quality.parquet`) and a hand-written table of complementary product
+types (`ecommerce_sim.reference.COMPLEMENTS`). A model that reads them is given the answer.
 
 - `recommendations/oracle.py` is the only module that reads the taste inputs, and
   only to build the oracle upper bound and the retrieval ceiling.
@@ -158,9 +160,9 @@ the answer.
   co-views, and product types bought together more often than chance (lift > 1,
   at least 5 orders).
 - `tests/test_ground_truth_guard.py` fails if any file under `recommendations/` or
-  `webapp/` imports `generators.taste` (except the oracle) or
-  `generators.config.COMPLEMENTS`, or names `customer_profiles` or
-  `product_affinity`.
+  `webapp/` imports anything from the package (only the oracle may import
+  `ecommerce_sim.taste`), or names `_ground_truth`, `customer_taste`,
+  `product_quality`, `COMPLEMENTS` or `product_affinity`.
 
 ## ALS settings
 

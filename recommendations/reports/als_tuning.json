@@ -1,14 +1,14 @@
 {
-  "generated_at": "2026-11-09T14:51:55+00:00",
+  "generated_at": "2026-11-13T22:07:01+00:00",
   "k": 20,
   "embargo_days": 7,
   "validation_window": [
-    "2025-12-24 10:05:18",
-    "2026-04-03 21:03:57.200000"
+    "2026-05-07 21:37:05",
+    "2026-08-23 23:40:34"
   ],
   "test_window": [
-    "2026-04-03 21:03:57.200000",
-    "2026-06-30 22:58:53"
+    "2026-08-23 23:40:34",
+    "2026-11-13 23:46:50"
   ],
   "serving_before_run": {
     "factors": 32,
@@ -31,9 +31,9 @@
         3,
         5
       ],
-      "customers": 4140,
-      "recall@20": 0.07675545133878467,
-      "ndcg@20": 0.04725698749123165
+      "customers": 4133,
+      "recall@20": 0.24682089770305962,
+      "ndcg@20": 0.12343322842680546
     },
     {
       "stage": "weights",
@@ -45,9 +45,9 @@
         1,
         1
       ],
-      "customers": 4140,
-      "recall@20": 0.0705628664143157,
-      "ndcg@20": 0.04354076086131858
+      "customers": 4133,
+      "recall@20": 0.24461772698214793,
+      "ndcg@20": 0.12160240538804613
     },
     {
       "stage": "weights",
@@ -59,9 +59,9 @@
         5,
         10
       ],
-      "customers": 4140,
-      "recall@20": 0.07676130699681426,
-      "ndcg@20": 0.04655629737837433
+      "customers": 4133,
+      "recall@20": 0.24773748377374966,
+      "ndcg@20": 0.12390265388928254
     },
     {
       "stage": "weights",
@@ -73,9 +73,9 @@
         3,
         8
       ],
-      "customers": 4140,
-      "recall@20": 0.07620268419181464,
-      "ndcg@20": 0.046802294742087434
+      "customers": 4133,
+      "recall@20": 0.2479128423568665,
+      "ndcg@20": 0.12441062773787105
     },
     {
       "stage": "weights",
@@ -87,9 +87,9 @@
         1,
         10
       ],
-      "customers": 4140,
-      "recall@20": 0.0763340966601836,
-      "ndcg@20": 0.045877151786310175
+      "customers": 4133,
+      "recall@20": 0.24268447338211088,
+      "ndcg@20": 0.11821611657676903
     },
     {
       "stage": "weights",
@@ -101,9 +101,9 @@
         0.5,
         20
       ],
-      "customers": 4140,
-      "recall@20": 0.0753356024008198,
-      "ndcg@20": 0.045255289172714847
+      "customers": 4133,
+      "recall@20": 0.2263872189531798,
+      "ndcg@20": 0.11076272761488876
     },
     {
       "stage": "weights",
@@ -115,9 +115,9 @@
         0.0,
         1.0
       ],
-      "customers": 4140,
-      "recall@20": 0.057173085234679434,
-      "ndcg@20": 0.036991817718639415
+      "customers": 4133,
+      "recall@20": 0.2012696284717279,
+      "ndcg@20": 0.10433113273417331
     },
     {
       "stage": "hyperparameters",
@@ -125,13 +125,13 @@
       "regularization": 0.01,
       "iterations": 15,
       "weights": [
-        1,
+        0.5,
         3,
-        5
+        8
       ],
-      "customers": 4140,
-      "recall@20": 0.075794356609574,
-      "ndcg@20": 0.04610852922390354
+      "customers": 4133,
+      "recall@20": 0.256314625224073,
+      "ndcg@20": 0.1260274506123975
     },
     {
       "stage": "hyperparameters",
@@ -139,13 +139,13 @@
       "regularization": 0.1,
       "iterations": 15,
       "weights": [
-        1,
+        0.5,
         3,
-        5
+        8
       ],
-      "customers": 4140,
-      "recall@20": 0.07560111989459815,
-      "ndcg@20": 0.04601765541805869
+      "customers": 4133,
+      "recall@20": 0.25410219376426396,
+      "ndcg@20": 0.1258353619545685
     },
     {
       "stage": "hyperparameters",
@@ -153,13 +153,13 @@
       "regularization": 1.0,
       "iterations": 15,
       "weights": [
-        1,
+        0.5,
         3,
-        5
+        8
       ],
-      "customers": 4140,
-      "recall@20": 0.07593525838091054,
-      "ndcg@20": 0.04621338964279984
+      "customers": 4133,
+      "recall@20": 0.25740697699888015,
+      "ndcg@20": 0.12682389930003188
     },
     {
       "stage": "hyperparameters",
@@ -167,13 +167,13 @@
       "regularization": 0.01,
       "iterations": 15,
       "weights": [
-        1,
+        0.5,
         3,
-        5
+        8
       ],
-      "customers": 4140,
-      "recall@20": 0.07740762525182815,
-      "ndcg@20": 0.047219706039251415
+      "customers": 4133,
+      "recall@20": 0.25056955635824535,
+      "ndcg@20": 0.12442698272933227
     },
     {
       "stage": "hyperparameters",
@@ -181,13 +181,13 @@
       "regularization": 0.1,
       "iterations": 15,
       "weights": [
-        1,
+        0.5,
         3,
-        5
+        8
       ],
-      "customers": 4140,
-      "recall@20": 0.07675545133878467,
-      "ndcg@20": 0.04725698749123165
+      "customers": 4133,
+      "recall@20": 0.2479128423568665,
+      "ndcg@20": 0.12441062773787105
     },
     {
       "stage": "hyperparameters",
@@ -195,13 +195,13 @@
       "regularization": 1.0,
       "iterations": 15,
       "weights": [
-        1,
+        0.5,
         3,
-        5
+        8
       ],
-      "customers": 4140,
-      "recall@20": 0.07723854312622429,
-      "ndcg@20": 0.047107229510693925
+      "customers": 4133,
+      "recall@20": 0.24755800044429693,
+      "ndcg@20": 0.12391141871540799
     },
     {
       "stage": "hyperparameters",
@@ -209,13 +209,13 @@
       "regularization": 0.01,
       "iterations": 15,
       "weights": [
-        1,
+        0.5,
         3,
-        5
+        8
       ],
-      "customers": 4140,
-      "recall@20": 0.07259118096074618,
-      "ndcg@20": 0.04540915823946728
+      "customers": 4133,
+      "recall@20": 0.23991838168595656,
+      "ndcg@20": 0.1181904796314273
     },
     {
       "stage": "hyperparameters",
@@ -223,13 +223,13 @@
       "regularization": 0.1,
       "iterations": 15,
       "weights": [
-        1,
+        0.5,
         3,
-        5
+        8
       ],
-      "customers": 4140,
-      "recall@20": 0.07269182508312942,
-      "ndcg@20": 0.04535635610397153
+      "customers": 4133,
+      "recall@20": 0.2429232948738323,
+      "ndcg@20": 0.11903918016921249
     },
     {
       "stage": "hyperparameters",
@@ -237,13 +237,13 @@
       "regularization": 1.0,
       "iterations": 15,
       "weights": [
-        1,
+        0.5,
         3,
-        5
+        8
       ],
-      "customers": 4140,
-      "recall@20": 0.07269182508312942,
-      "ndcg@20": 0.04546592010896724
+      "customers": 4133,
+      "recall@20": 0.23864879396748728,
+      "ndcg@20": 0.11816025869826176
     },
     {
       "stage": "hyperparameters",
@@ -251,13 +251,13 @@
       "regularization": 0.01,
       "iterations": 15,
       "weights": [
-        1,
+        0.5,
         3,
-        5
+        8
       ],
-      "customers": 4140,
-      "recall@20": 0.0723789656398352,
-      "ndcg@20": 0.045329194335584216
+      "customers": 4133,
+      "recall@20": 0.232810597585321,
+      "ndcg@20": 0.11610488187361566
     },
     {
       "stage": "hyperparameters",
@@ -265,13 +265,13 @@
       "regularization": 0.1,
       "iterations": 15,
       "weights": [
-        1,
+        0.5,
         3,
-        5
+        8
       ],
-      "customers": 4140,
-      "recall@20": 0.07249973858669512,
-      "ndcg@20": 0.045438265128518146
+      "customers": 4133,
+      "recall@20": 0.23359105251227966,
+      "ndcg@20": 0.11675936678865878
     },
     {
       "stage": "hyperparameters",
@@ -279,13 +279,13 @@
       "regularization": 1.0,
       "iterations": 15,
       "weights": [
-        1,
+        0.5,
         3,
-        5
+        8
       ],
-      "customers": 4140,
-      "recall@20": 0.07217767739506871,
-      "ndcg@20": 0.045330894851249456
+      "customers": 4133,
+      "recall@20": 0.23374342655166072,
+      "ndcg@20": 0.11689630725511052
     },
     {
       "stage": "hyperparameters",
@@ -293,13 +293,13 @@
       "regularization": 0.01,
       "iterations": 15,
       "weights": [
-        1,
+        0.5,
         3,
-        5
+        8
       ],
-      "customers": 4140,
-      "recall@20": 0.06870870541160395,
-      "ndcg@20": 0.04394515958264185
+      "customers": 4133,
+      "recall@20": 0.21466263259291174,
+      "ndcg@20": 0.10646452968668235
     },
     {
       "stage": "hyperparameters",
@@ -307,13 +307,13 @@
       "regularization": 0.1,
       "iterations": 15,
       "weights": [
-        1,
+        0.5,
         3,
-        5
+        8
       ],
-      "customers": 4140,
-      "recall@20": 0.06888986483189381,
-      "ndcg@20": 0.043928853683072866
+      "customers": 4133,
+      "recall@20": 0.21616441659334362,
+      "ndcg@20": 0.10688802405315653
     },
     {
       "stage": "hyperparameters",
@@ -321,35 +321,35 @@
       "regularization": 1.0,
       "iterations": 15,
       "weights": [
-        1,
+        0.5,
         3,
-        5
+        8
       ],
-      "customers": 4140,
-      "recall@20": 0.06926023520226418,
-      "ndcg@20": 0.04417166305109993
+      "customers": 4133,
+      "recall@20": 0.21627487620658573,
+      "ndcg@20": 0.10681360196543467
     }
   ],
   "best_on_validation": {
-    "factors": 32,
-    "regularization": 0.1,
+    "factors": 16,
+    "regularization": 1.0,
     "iterations": 15,
     "weights": [
-      1,
+      0.5,
       3,
-      5
+      8
     ]
   },
   "test": {
     "serving_before_run": {
-      "customers": 4170,
-      "recall@20": 0.09000675649956226,
-      "ndcg@20": 0.0559655429425845
+      "customers": 4710,
+      "recall@20": 0.2510746827967697,
+      "ndcg@20": 0.12364195572425452
     },
     "best": {
-      "customers": 4170,
-      "recall@20": 0.09000675649956226,
-      "ndcg@20": 0.0559655429425845
+      "customers": 4710,
+      "recall@20": 0.2593213544951087,
+      "ndcg@20": 0.13000450279623396
     }
   }
 }

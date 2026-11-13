@@ -13,5 +13,6 @@ supertokens-python==0.30.4
 httpx==0.28.1
 phonenumbers==9.0.43
 duckdb==2.0.0
+ecommerce-simulator @ https://github.com/Meetpanchal58/ecommerce-simulator/archive/1ea2a75b89b241f0a4ea933d79899350fa47000e.zip  # the shop's data (prepare_data.py)
 psycopg[binary,pool]==3.3.9  # live database on Postgres (DATABASE_URL)
 lightgbm==4.7.0

@@ -1,10 +1,15 @@
 """Seed the live web-app database and initialize its DuckDB analytical mirror.
 
-Postgres (DATABASE_URL set, e.g. Neon): seeds only an empty database, so redeploys and
-restarts never wipe live activity. Use --reset to delete everything and seed again.
+Postgres (DATABASE_URL set, e.g. Neon) keeps live activity across redeploys:
+  - empty database: seed it;
+  - same shop as last time (ecommerce-simulator size, seed and opening day): keep everything and
+    only add products, customers and stock rows that are new in the refreshed data;
+  - a different shop (or --reset): delete everything and seed again, because old orders and
+    clicks point at the old shop's products.
 SQLite (local): the file is rebuilt from scratch each run, as before.
 """
 import argparse
+import json
 import sys
 import pandas as pd
 import numpy as np
@@ -19,6 +24,42 @@ DB = Path(__file__).resolve().parent / "pantree_app.db"
 rng = np.random.default_rng(42)
 
 
+def shop_identity() -> dict:
+    """Which simulated shop the data is (stays the same when the data refreshes nightly)."""
+    manifest = DATA / "source" / "manifest.json"
+    info = json.loads(manifest.read_text()) if manifest.exists() else {}
+    return {key: info.get(key) for key in ("size", "seed", "first_day", "n_products")}
+
+
+def stored_identity(con, existing) -> dict | None:
+    if "pantree_meta" not in existing:
+        return None
+    row = con.execute("SELECT value FROM pantree_meta WHERE key='shop'").fetchone()
+    return json.loads(row[0]) if row else None
+
+
+def starting_stock(prod) -> pd.DataFrame:
+    """Each product's stock at the end of the data (the live shop starts from there)."""
+    inv_src = pd.read_parquet(DATA / "inventory.parquet")
+    inv_src["inventory_date"] = pd.to_datetime(inv_src.inventory_date)
+    inv = (inv_src.sort_values("inventory_date")
+           .groupby(["product_id"], as_index=False).tail(1)[["product_id", "closing_stock"]]
+           .rename(columns={"closing_stock": "current_stock"}))
+    inv = prod[["product_id"]].merge(inv, on="product_id", how="left").fillna({"current_stock": 0})
+    inv["base_stock"] = inv["current_stock"]
+    return inv
+
+
+def top_up(con, prod, cust, inv) -> str:
+    """Add rows that are new in the refreshed data; never change or delete existing ones."""
+    counts = {}
+    for table, frame, key in (("products", prod, "product_id"), ("customers", cust, "customer_id"),
+                              ("inventory", inv, "product_id")):
+        have = {row[0] for row in con.execute(f"SELECT {key} FROM {table}").fetchall()}
+        counts[table] = database.append_frame(con, table, frame[~frame[key].isin(have)])
+    return ", ".join(f"{n:,} {table}" for table, n in counts.items())
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--reset", action="store_true",
@@ -30,8 +71,13 @@ def main(argv=None):
         raise SystemExit(
             "Generated warehouse is incomplete. Missing: "
             + ", ".join(missing)
-            + ". Run `python generate_data.py --mode initialize` first."
+            + ". Run `python prepare_data.py` first."
         )
+
+    prod = pd.read_parquet(DATA / "product_master.parquet")
+    cust = pd.read_parquet(DATA / "customer_master.parquet")
+    inv = starting_stock(prod)
+    identity = shop_identity()
 
     postgres = bool(database.database_url())
     if not postgres and DB.exists():
@@ -39,28 +85,27 @@ def main(argv=None):
     con = database.connect(DB)
     if postgres:
         existing = database.table_names(con)
-        if not args.reset and "products" in existing and con.execute("SELECT COUNT(*) FROM products").fetchone()[0]:
-            print("Live Postgres database is already seeded: keeping its data (use --reset to start over).")
+        seeded = "products" in existing and con.execute("SELECT COUNT(*) FROM products").fetchone()[0]
+        if seeded and not args.reset and stored_identity(con, existing) == identity:
+            added = top_up(con, prod, cust, inv)
+            con.commit()
             con.close()
+            print(f"Live Postgres database already holds this shop: kept all activity, added {added}.")
             return
-        for table in existing:  # empty or --reset: start from a clean schema
+        if seeded:
+            print("Resetting the live Postgres database" + (" (--reset)." if args.reset else
+                  ": it holds a different shop than the downloaded data."))
+        for table in existing:  # empty, reset or another shop: start from a clean schema
             con.execute(f"DROP TABLE IF EXISTS {table} CASCADE")
         con.commit()
 
-    prod = pd.read_parquet(DATA / "product_master.parquet")
     database.write_frame(con, "products", prod)
-
-    cust = pd.read_parquet(DATA / "customer_master.parquet")
     database.write_frame(con, "customers", cust)
-
-    inv_src = pd.read_parquet(DATA / "inventory.parquet")
-    inv_src["inventory_date"] = pd.to_datetime(inv_src.inventory_date)
-    inv = (inv_src.sort_values("inventory_date")
-           .groupby(["product_id"], as_index=False).tail(1)[["product_id", "closing_stock"]]
-           .rename(columns={"closing_stock": "current_stock"}))
-    inv = prod[["product_id"]].merge(inv, on="product_id", how="left").fillna({"current_stock": 0})
-    inv["base_stock"] = inv["current_stock"]
     database.write_frame(con, "inventory", inv)
+    con.execute("CREATE TABLE IF NOT EXISTS pantree_meta (key TEXT PRIMARY KEY, value TEXT)")
+    con.execute("DELETE FROM pantree_meta WHERE key='shop'")
+    con.execute("INSERT INTO pantree_meta (key, value) VALUES ('shop', ?)", (json.dumps(identity),))
+
 
     con.executescript("""
     CREATE TABLE IF NOT EXISTS clickstream (

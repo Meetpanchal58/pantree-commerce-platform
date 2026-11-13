@@ -203,9 +203,13 @@ on the site (accounts, carts, orders, clicks, impressions) persists.
 1. Create a free project at neon.tech (region close to the Render service, e.g. Singapore),
    click **Connect**, keep **Connection pooling** on and copy the connection string.
 2. In Render → the web service → **Environment**, add `DATABASE_URL` with that string.
-3. Deploy. The build runs `python webapp/seed_db.py`, which seeds the catalogue, customers and
-   stock only when the database is empty; later deploys keep the live data.
-   `python webapp/seed_db.py --reset` deletes everything and seeds again.
+3. Deploy. The build downloads the small shop (`python prepare_data.py --size small --recent-months 6`,
+   which keeps six months of browsing for serving so the app fits the free plan's 512 MB) and runs
+   `python webapp/seed_db.py`. Seeding fills an empty database; on later deploys of the same shop it
+   keeps all live activity and only adds products, customers and stock rows that are new in the
+   nightly-refreshed data. If the downloaded shop is a different one (another size or seed), it
+   starts over, since old orders point at the old products. `python webapp/seed_db.py --reset`
+   deletes everything and seeds again. Seeded tables use about 5 MB of Neon's 1 GB.
 
 Without `DATABASE_URL` the app keeps using SQLite (local development and most tests).
 `webapp/database.py` lets the same SQL run on both: it converts `?` placeholders, makes LIKE

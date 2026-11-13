@@ -1,39 +1,15 @@
 # The `data` folder
 
-This folder is where Pantree keeps its generated practice data. The data files are not included
-in GitHub; each person creates them on their own computer. This keeps the project download
-smaller and lets the dataset be rebuilt with the same settings.
+Pantree's data is not stored in GitHub. Get it with:
 
-## Create the data for the first time
-
-Open PowerShell in the main project folder and run:
-
-```powershell
-.\.venv\Scripts\python.exe generate_data.py --mode initialize
-.\.venv\Scripts\python.exe validators\preflight_checks.py
+```bash
+python prepare_data.py            # full shop (or --size small / medium / large)
 ```
 
-The first command creates example products, customers, orders, browsing activity, stock records,
-and supporting data. It also writes `metrics.json`, smaller files arranged by date in
-`_partitioned`, and progress information in `_state`. The second command checks that the files
-were generated consistently.
+| Path | What it holds |
+|---|---|
+| `source/` | The [ecommerce-simulator](https://github.com/Meetpanchal58/ecommerce-simulator) tables as published (sales, customers, clickstream, impressions, inventory history, marketing, support, `derived/`, `_ground_truth/`). The analysis notebook reads these. |
+| `*.parquet` | The tables the recommender and the web app read, converted from `source/`: `product_master`, `customer_master`, `transactions`, `orders`, `clickstream` (product interactions), `inventory` (daily stock per product). |
 
-**Warning:** `initialize` replaces generated Parquet files and simulator progress in this folder.
-Save a copy first if you need to keep an existing generated dataset. It does not create or reset
-the live shop database; that is a separate step described in the
-[main setup guide](../docs/running.md#how-to-run).
-
-## Add more days later
-
-To continue an existing dataset instead of starting again, use:
-
-```powershell
-.\.venv\Scripts\python.exe generate_data.py --mode increment
-```
-
-This catches the data up through today, keeping the earlier generated history. It requires a
-dataset that was already created with `initialize`.
-
-Optional settings such as the number of customers, number of products, random seed, and end date
-are described in the main guide's
-[data size settings](../docs/running.md#change-the-dataset-size-optional).
+`_ground_truth/` holds each simulated customer's true taste. Only the evaluation's oracle may read
+it (a test enforces this); see [docs/data.md](../docs/data.md).

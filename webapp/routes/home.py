@@ -65,7 +65,7 @@ def home(request: Request, sid: str = Cookie(None)):
         request,
         prods=con.execute(
             """SELECT p.*, i.current_stock FROM products p JOIN inventory i USING(product_id)
-        WHERE i.current_stock > 0 ORDER BY p.avg_rating DESC, p.review_count DESC LIMIT 24"""
+        WHERE i.current_stock > 0 ORDER BY COALESCE(p.avg_rating,0) DESC, p.review_count DESC LIMIT 24"""
         ).fetchall(),
         cats=_departments(con),
         title="Home",
