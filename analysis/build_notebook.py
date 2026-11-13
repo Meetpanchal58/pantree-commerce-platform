@@ -176,8 +176,10 @@ SUMMARY.update(sessions=int(total), session_conversion=reached["purchase"] / tot
 
 md("## 5. Payments and delivery problems")
 code("""
+hbar(tx["payment_method"].value_counts(normalize=True), "How shoppers pay (share of order lines)", color=SERIES[0])
 rto = tx.groupby("payment_method")["order_status"].apply(lambda st: st.eq("Returned to Origin").mean())
 hbar(rto, "Parcels returned undelivered (RTO), by payment method", color=SERIES[1])
+# RTO is a cash-on-delivery problem: the buyer refuses the parcel at the door; prepaid buyers have already paid.
 cod = rto["COD"]; other = tx[tx.payment_method.ne("COD")]["order_status"].eq("Returned to Origin").mean()
 print(f"Cash on delivery RTO rate {cod:.1%} vs {other:.1%} for prepaid ({cod/other:.1f}×)")
 failed = cs.event_type.eq("payment_failed").sum() / max(cs.event_type.eq("payment_attempt").sum(), 1)

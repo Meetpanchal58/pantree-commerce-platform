@@ -279,7 +279,7 @@ def checkout(
         "Debit Card",
         "Net Banking",
         "COD",
-        "Amazon Pay",
+        "Wallet",
     }
     if payment_method not in payment_methods:
         con.close()
