@@ -10,8 +10,9 @@ OTP sign-up, login, refresh, and logout. Sign-up and sign-in are separate flows:
 (`POST /signup/otp/request`) collects profile details, rejects an email or mobile that already
 has an account, and creates the customer only after the code is verified; sign-in
 (`POST /login/otp/request`) sends a code only to existing accounts and never creates one.
-SQLite continues to own Pantree profiles, carts, and orders, while SuperTokens Core stores
-authentication/session data in PostgreSQL.
+Pantree's own live database (profiles, carts, orders, activity) is Postgres when
+`DATABASE_URL` is set and SQLite otherwise (see "Live database" below), while SuperTokens Core
+stores authentication/session data in its own PostgreSQL.
 
 ### Sign-in and access control
 
@@ -192,3 +193,31 @@ Passing local tests by itself does not mean that a public deployment or real SMS
 has been tested.
 
 Back to the [README](../README.md).
+
+## Live database (Postgres on Neon)
+
+On Render's free plan the disk is wiped on every redeploy, restart and sleep, so a SQLite file
+loses all activity. Set `DATABASE_URL` to a hosted Postgres database and everything people do
+on the site (accounts, carts, orders, clicks, impressions) persists.
+
+1. Create a free project at neon.tech (region close to the Render service, e.g. Singapore),
+   click **Connect**, keep **Connection pooling** on and copy the connection string.
+2. In Render → the web service → **Environment**, add `DATABASE_URL` with that string.
+3. Deploy. The build runs `python webapp/seed_db.py`, which seeds the catalogue, customers and
+   stock only when the database is empty; later deploys keep the live data.
+   `python webapp/seed_db.py --reset` deletes everything and seeds again.
+
+Without `DATABASE_URL` the app keeps using SQLite (local development and most tests).
+`webapp/database.py` lets the same SQL run on both: it converts `?` placeholders, makes LIKE
+case-insensitive as in SQLite, and pools connections (Neon's pooler does not support prepared
+statements, so they are turned off). The Neon free plan has 1 GB of storage; a demo site uses
+a small fraction of it.
+
+### Reset my recommendations
+
+The account page has a **Reset my recommendations** button. It deletes the customer's
+clickstream, recommendation impressions and clicks, cart, wishlist, orders and returns, and
+their other login sessions; it keeps the account, the sign-in link and the current login.
+Units of open (not yet delivered) orders go back into stock with an `ACCOUNT_RESET` inventory
+movement. `customers.recommendations_reset_at` is set, so serving ignores anything stored about
+the customer before the reset and personalises again from new activity.

@@ -122,6 +122,11 @@ async def recommendations_api(surface: str, request: Request, sid: str = Cookie(
         context["product_id"] = body["product_id"]
 
     customer_id = session["customer_id"]
+    reset = con.execute(
+        "SELECT recommendations_reset_at FROM customers WHERE customer_id=?", (customer_id,)
+    ).fetchone()
+    # After "Reset my recommendations" only live activity since the reset counts.
+    context["history_reset"] = bool(reset and reset[0])
     if surface == "cart" and "cart" not in context:
         context["cart"] = [
             row["product_id"]

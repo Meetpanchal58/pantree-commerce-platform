@@ -57,6 +57,7 @@ from supertokens_python.recipe.session.exceptions import TryRefreshTokenError
 from starlette.concurrency import run_in_threadpool
 
 try:
+    from . import database
     from .analytics_sync import (
         mirror_event,
         mirror_customer,
@@ -65,7 +66,9 @@ try:
         mirror_inventory,
         mirror_inventory_movement,
         mirror_return,
+        forget_customer_activity,
     )
+    from .account_reset import reset_customer_activity
     from .auth import (
         TENANT_ID,
         delivery_channel_configured,
@@ -73,6 +76,7 @@ try:
         reserve_otp_request,
     )
 except ImportError:
+    import database
     from analytics_sync import (
         mirror_event,
         mirror_customer,
@@ -81,7 +85,9 @@ except ImportError:
         mirror_inventory,
         mirror_inventory_movement,
         mirror_return,
+        forget_customer_activity,
     )
+    from account_reset import reset_customer_activity
     from auth import (
         TENANT_ID,
         delivery_channel_configured,
@@ -115,13 +121,10 @@ initialize_supertokens()
 
 def _warm_recommendation_worker():
     try:
-        if DB.exists():
-            con = sqlite3.connect(DB, timeout=60)
+        if database.database_url() or DB.exists():
+            con = database.connect(DB)
             try:
-                exists = con.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='clickstream'"
-                ).fetchone()
-                if exists:
+                if database.table_exists(con, "clickstream"):
                     con.execute(
                         """CREATE INDEX IF NOT EXISTS ix_click_customer_recent_product
                            ON clickstream(customer_id,event_timestamp DESC,product_id)"""
@@ -138,12 +141,25 @@ tpl = Jinja2Templates(directory=str(BASE / "templates"))
 
 
 def db():
-    con = sqlite3.connect(DB, timeout=60)
-    con.row_factory = sqlite3.Row
-    con.execute("PRAGMA busy_timeout=60000;")
+    con = database.connect(DB)
+    con.execute("PRAGMA busy_timeout=60000;")  # SQLite only (skipped on Postgres)
     con.execute("PRAGMA foreign_keys=ON;")
     _ensure_customer_schema(con)
     return con
+
+
+_SCHEMA_CHECKED: set = set()
+
+
+def _already_checked(con, step):
+    """On Postgres, schema set-up runs once per process instead of on every request
+    (each check is a round trip to the database server). SQLite keeps checking each time."""
+    if not database.is_postgres(con):
+        return False
+    if step in _SCHEMA_CHECKED:
+        return True
+    _SCHEMA_CHECKED.add(step)
+    return False
 
 
 def now():
@@ -167,46 +183,25 @@ CUSTOMER_DIM_COLUMNS = {
     "age_bracket": "TEXT",
     "acquisition_campaign": "TEXT",
     "terms_accepted_at": "TEXT",
+    "recommendations_reset_at": "TEXT",  # set by "Reset my recommendations"
 }
 
 
 def _ensure_customer_schema(con):
-    existing = {row[1] for row in con.execute("PRAGMA table_info(customers)")}
+    if _already_checked(con, "customer_schema"):
+        return
+    existing = set(database.table_columns(con, "customers"))
     if existing:
         for name, kind in CUSTOMER_DIM_COLUMNS.items():
             if name not in existing:
                 con.execute(f"ALTER TABLE customers ADD COLUMN {name} {kind}")
     ensure_customer_pii(con)
-    (
-        con.execute("ALTER TABLE transactions ADD COLUMN ship_address_line1 TEXT")
-        if "ship_address_line1"
-        not in {row[1] for row in con.execute("PRAGMA table_info(transactions)")}
-        else None
-    )
-    (
-        con.execute("ALTER TABLE transactions ADD COLUMN ship_address_line2 TEXT")
-        if "ship_address_line2"
-        not in {row[1] for row in con.execute("PRAGMA table_info(transactions)")}
-        else None
-    )
-    (
-        con.execute("ALTER TABLE transactions ADD COLUMN ship_postal_code TEXT")
-        if "ship_postal_code"
-        not in {row[1] for row in con.execute("PRAGMA table_info(transactions)")}
-        else None
-    )
-    (
-        con.execute("ALTER TABLE transactions ADD COLUMN ship_country TEXT")
-        if "ship_country"
-        not in {row[1] for row in con.execute("PRAGMA table_info(transactions)")}
-        else None
-    )
-    (
-        con.execute("ALTER TABLE transactions ADD COLUMN ship_phone TEXT")
-        if "ship_phone"
-        not in {row[1] for row in con.execute("PRAGMA table_info(transactions)")}
-        else None
-    )
+    transaction_columns = set(database.table_columns(con, "transactions"))
+    if transaction_columns:
+        for name in ("ship_address_line1", "ship_address_line2", "ship_postal_code", "ship_country", "ship_phone"):
+            if name not in transaction_columns:
+                con.execute(f"ALTER TABLE transactions ADD COLUMN {name} TEXT")
+    con.commit()
 
 
 def log_event(
@@ -268,20 +263,16 @@ def log_event(
 
 
 def table_exists(con, name):
-    return (
-        con.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
-        ).fetchone()
-        is not None
-    )
+    return database.table_exists(con, name)
 
 
 def ensure_sessions(con):
+    if _already_checked(con, "sessions"):
+        return
     con.execute("""CREATE TABLE IF NOT EXISTS sessions (
         session_id TEXT PRIMARY KEY, customer_id TEXT, device_type TEXT, created_at TEXT,
         supertokens_session_handle TEXT)""")
-    columns = {row[1] for row in con.execute("PRAGMA table_info(sessions)")}
-    if "supertokens_session_handle" not in columns:
+    if "supertokens_session_handle" not in database.table_columns(con, "sessions"):
         con.execute("ALTER TABLE sessions ADD COLUMN supertokens_session_handle TEXT")
     con.commit()
 
@@ -305,8 +296,8 @@ def ensure_customer_pii(con):
             payload TEXT NOT NULL,
             created_at REAL NOT NULL
         )""")
-    tables = {row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    customer_columns = {row[1] for row in con.execute("PRAGMA table_info(customers)")} if "customers" in tables else set()
+    tables = database.table_names(con)
+    customer_columns = set(database.table_columns(con, "customers")) if "customers" in tables else set()
     legacy = [c for c in PII_COLUMNS if c in customer_columns]
     if legacy:
         rows = con.execute(
@@ -316,23 +307,25 @@ def ensure_customer_pii(con):
         for row in rows:
             customer_id, values = row[0], dict(zip(legacy, tuple(row)[1:]))
             con.execute(
-                "INSERT OR IGNORE INTO customer_pii (customer_id, created_at) VALUES (?, ?)",
+                "INSERT INTO customer_pii (customer_id, created_at) VALUES (?, ?) ON CONFLICT DO NOTHING",
                 (customer_id, now()),
             )
             for column, value in values.items():
                 if value in (None, ""):
                     continue
                 try:
-                    con.execute(
-                        f"UPDATE customer_pii SET {column}=? WHERE customer_id=? AND {column} IS NULL",
-                        (value, customer_id),
-                    )
-                except sqlite3.IntegrityError:
+                    with database.savepoint(con):
+                        con.execute(
+                            f"UPDATE customer_pii SET {column}=? WHERE customer_id=? AND {column} IS NULL",
+                            (value, customer_id),
+                        )
+                except database.IntegrityError:
                     logger.warning("Skipped a duplicate %s while migrating customer PII", column)
         for column in legacy:
             try:
-                con.execute(f"ALTER TABLE customers DROP COLUMN {column}")
-            except sqlite3.OperationalError:
+                with database.savepoint(con):
+                    con.execute(f"ALTER TABLE customers DROP COLUMN {column}")
+            except database.OperationalError:
                 con.execute(f"UPDATE customers SET {column}=NULL")
     if "auth" in tables:
         for customer_id, email in con.execute(
@@ -341,20 +334,23 @@ def ensure_customer_pii(con):
                WHERE a.email IS NOT NULL AND (p.customer_id IS NULL OR p.email IS NULL)"""
         ).fetchall():
             con.execute(
-                "INSERT OR IGNORE INTO customer_pii (customer_id, created_at) VALUES (?, ?)",
+                "INSERT INTO customer_pii (customer_id, created_at) VALUES (?, ?) ON CONFLICT DO NOTHING",
                 (customer_id, now()),
             )
             try:
-                con.execute(
-                    "UPDATE customer_pii SET email=? WHERE customer_id=? AND email IS NULL",
-                    (email.strip().lower(), customer_id),
-                )
-            except sqlite3.IntegrityError:
+                with database.savepoint(con):
+                    con.execute(
+                        "UPDATE customer_pii SET email=? WHERE customer_id=? AND email IS NULL",
+                        (email.strip().lower(), customer_id),
+                    )
+            except database.IntegrityError:
                 logger.warning("Skipped a duplicate email while migrating customer PII")
     con.commit()
 
 
 def ensure_auth_tables(con):
+    if _already_checked(con, "auth_tables"):
+        return
     ensure_sessions(con)
     _ensure_customer_schema(con)  # dimension columns + customer_pii
     con.execute("""CREATE TABLE IF NOT EXISTS supertokens_customers (
@@ -370,6 +366,8 @@ def ensure_auth_tables(con):
 
 
 def ensure_wishlist(con):
+    if _already_checked(con, "wishlist"):
+        return
     con.execute("""CREATE TABLE IF NOT EXISTS wishlist (
         customer_id TEXT, product_id TEXT, added_at TEXT,
         PRIMARY KEY (customer_id, product_id)

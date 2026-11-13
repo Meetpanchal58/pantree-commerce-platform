@@ -13,4 +13,5 @@ supertokens-python==0.30.4
 httpx==0.28.1
 phonenumbers==9.0.43
 duckdb==2.0.0
+psycopg[binary,pool]==3.3.9  # live database on Postgres (DATABASE_URL)
 lightgbm==4.7.0

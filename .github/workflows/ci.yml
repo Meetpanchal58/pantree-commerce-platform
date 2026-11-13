@@ -12,6 +12,14 @@ jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    services:
+      postgres:  # the live database in production; tests/test_live_db_journey.py runs on it
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       # Small, deterministic dataset so the job finishes in a few minutes.
       PANTREE_SEED: "42"
@@ -20,6 +28,7 @@ jobs:
       PANTREE_SELLERS: "60"
       PANTREE_TODAY: "2025-12-31"
       HF_HUB_OFFLINE: "1"  # tests never download the sentence-transformer model
+      PANTREE_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

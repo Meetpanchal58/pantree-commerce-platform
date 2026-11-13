@@ -559,6 +559,10 @@ def recommend(
 ) -> list[dict[str, Any]]:
     """Return ranked recommendations for a customer and storefront surface."""
     context = dict(context or {})
+    if context.get("history_reset"):
+        # The customer reset their recommendations: ignore everything stored about them
+        # (warehouse history, model vectors) and use only the live activity in `context`.
+        customer_id = None
     config = SURFACE_CONFIG.get(surface)
     if config is None:
         raise ValueError(f"Unknown surface: {surface!r}")
