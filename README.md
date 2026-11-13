@@ -1,6 +1,6 @@
 # Pantree — Hybrid Recommender on a Simulated Fashion Store
 
-[![CI](https://github.com/Meetpanchal58/pantree-commerce-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/Meetpanchal58/pantree-commerce-platform/actions/workflows/ci.yml)
+[![CI](https://github.com/Meetpanchal58/pantree-recommendation-system/actions/workflows/ci.yml/badge.svg)](https://github.com/Meetpanchal58/pantree-recommendation-system/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 <!-- TLDR:START -->
