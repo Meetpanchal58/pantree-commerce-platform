@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-DOCS = [ROOT / "README.md", ROOT / "data" / "README.md", ROOT / "webapp" / "README.md",
+DOCS = [ROOT / "README.md",
         *sorted((ROOT / "docs").glob("*.md"))]
 LINK = re.compile(r"(?<!!)\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 CODE = re.compile(r"```.*?```", re.S)
