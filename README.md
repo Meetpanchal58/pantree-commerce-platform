@@ -35,7 +35,7 @@ to perfect knowledge.
 
 - **Problem:** rank products for the home-page "Recommended for you" row, predicting the exact product bought among 10,000, using only data known one hour before the order.
 - **Method:** 5 retrieval sources (implicit ALS, trending, recent activity, FAISS content similarity, co-purchase) → 11-feature LightGBM LambdaRank → 0.75 ranker + 0.25 retrieval-score blend for every customer (settings chosen on validation). The evaluated policy is the code the storefront serves (`recommendations/policy.py`).
-- **Evaluation:** 3-period temporal split, 7-day embargo, 5,647 held-out orders (of 5,831; order counts in docs/evaluation.md), paired-bootstrap 95% CIs.
+- **Evaluation:** 3-period temporal split, 7-day embargo, 5,647 held-out orders (of 5,831; order counts in docs/recommender.md), paired-bootstrap 95% CIs.
 - **Headline:** served policy NDCG@10 0.0386 vs 0.0239 for retrieval order: +0.0147 absolute (95% CI +0.0122 to +0.0172), +61% relative (95% CI +49% to +76%); 6.2× random. Within lists that contain a bought product (1,191 orders), NDCG@10 is 0.205.
 - **Ceiling:** the served policy captures 83% of the achievable gain from random to an oracle that knows each customer's true taste (95% CI 73% to 94%).
 - **Bottleneck:** candidate lists contain a bought product for 20.4% of orders; the top 150 by true taste would contain one for 46.2%. Next step: better retrieval (taste-aware candidate generation, e.g. a two-tower model), not more ranking features.
@@ -43,7 +43,7 @@ to perfect knowledge.
 <!-- RESULTS:END -->
 
 Full tables by segment, significance tests, retrieval figures and the source ablation:
-[docs/evaluation.md](docs/evaluation.md).
+[docs/recommender.md](docs/recommender.md#evaluation).
 
 ## How it works
 
@@ -85,15 +85,15 @@ storefront row works: [docs/recommender.md](docs/recommender.md).
   lifecycle order, money, prices, stock flows); CI downloads the small shop and runs the test
   suite, including the storefront journey on a real Postgres, on every push.
 
-Details: [docs/evaluation.md](docs/evaluation.md).
+Details: [docs/recommender.md](docs/recommender.md#evaluation).
 
 ## Analytics and churn
 
-`analysis/pantree_insights.ipynb` explores the shop's data (rebuild it with
-`python analysis/build_notebook.py`). Findings on the full shop:
+`analysis/insights.ipynb` explores the shop's data (re-run it with
+`jupyter execute --inplace analysis/insights.ipynb` after `pip install -r requirements-analysis.txt`). Findings on the full shop:
 
 <!-- INSIGHTS:START -->
-*Generated from `analysis/insights_summary.json`, written when the notebook runs.*
+*Generated from `recommendations/reports/insights_summary.json`, written when `analysis/insights.ipynb` runs.*
 
 - **Conversion:** 3.2% of 821,728 sessions end in a purchase; 10% of cart adds are bought.
 - **Cash on delivery:** 6.4% of COD parcels come back undelivered (RTO) vs 2.6% for prepaid (2.5×).
@@ -106,7 +106,7 @@ Details: [docs/evaluation.md](docs/evaluation.md).
 <!-- INSIGHTS:END -->
 
 <!-- LEAK:START -->
-*Generated from `analysis/reports/churn_leak_before_fix.json`.*
+*Generated from `recommendations/reports/churn_leak_before_fix.json`.*
 
 **A leak I found in my own data.** The first churn model looked good: gradient boosting reached test ROC-AUC **0.751**. The generator's monthly churn features counted the whole snapshot month, so 26,729 of 567,540 feature rows included orders placed after `snapshot_date`, overlapping the label window. Rebuilt strictly before the snapshot, the same model scores **0.580**. The generator now builds features point-in-time (0 leaky rows), and `validators/validate_dataset.py` fails if that ever regresses.
 <!-- LEAK:END -->
@@ -147,13 +147,13 @@ python prepare_data.py                         # download the shop's data (about
 python -m recommendations.tune_als             # ALS settings (validation period)
 python -m recommendations.tune_policy          # quotas, pool size, blend, first-timer rule, trending window
 python -m recommendations.evaluate             # test-period evaluation + ablation
-python -m recommendations.readme_summary       # regenerate the numbers in this README and docs/evaluation.md
+python -m recommendations.readme_summary       # regenerate the numbers in this README and docs/recommender.md
 python webapp/seed_db.py                       # storefront database (SQLite, or Postgres if DATABASE_URL is set)
 python -m uvicorn webapp.app:app --host 127.0.0.1 --port 8000
 ```
 
-Sign-in setup (SuperTokens, email or phone codes) and Windows commands: [docs/running.md](docs/running.md).
-Hosting, the Postgres live database and "Reset my recommendations": [docs/deployment.md](docs/deployment.md).
+Sign-in setup (SuperTokens, email or phone codes), Windows commands, hosting on Render with the Neon
+Postgres live database, and "Reset my recommendations": [docs/setup.md](docs/setup.md).
 
 ## Repository map
 
@@ -168,7 +168,7 @@ Hosting, the Postgres live database and "Reset my recommendations": [docs/deploy
 | `recommendations/reports/` | Generated reports and the chosen settings |
 | `webapp/` | FastAPI storefront, sign-in, live database (Postgres / SQLite), recommendation logging, account reset |
 | `analysis/` | Insights notebook and churn analysis |
-| `docs/` | [Recommender](docs/recommender.md), [evaluation](docs/evaluation.md), [data](docs/data.md), [running](docs/running.md), [deployment](docs/deployment.md) |
+| `docs/` | [Setup](docs/setup.md) (run, sign-in, hosting), [recommender](docs/recommender.md) (method + evaluation), [data](docs/data.md) |
 | `tests/` | Unit, parity, leakage and guard tests |
 
 ## License

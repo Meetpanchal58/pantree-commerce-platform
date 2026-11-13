@@ -57,7 +57,7 @@ class GeneratedBlockTests(unittest.TestCase):
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         for name in ("TLDR", "RESULTS", "INSIGHTS", "LEAK", "NEXT"):
             self.assertIn(f"<!-- {name}:START -->", readme, name)
-        evaluation = (ROOT / "docs" / "evaluation.md").read_text(encoding="utf-8")
+        evaluation = (ROOT / "docs" / "recommender.md").read_text(encoding="utf-8")
         for name in ("EVAL", "ABLATION"):
             self.assertIn(f"<!-- {name}:START -->", evaluation, name)
 

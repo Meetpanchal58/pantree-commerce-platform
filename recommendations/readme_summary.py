@@ -2,7 +2,7 @@
 
 * RESULTS  - "Results at a glance" (recommendations/reports/evaluation_report.json)
 * EVAL     - full recommendation results tables (same report + als_tuning.json)
-* INSIGHTS - data-analysis findings (analysis/insights_summary.json, written by
+* INSIGHTS - data-analysis findings (recommendations/reports/insights_summary.json, written by
              the executed notebook)
 
 Every number in these blocks comes from a generated file; nothing is typed by
@@ -17,9 +17,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 REPORT = Path(__file__).with_name("reports") / "evaluation_report.json"
 ALS_REPORT = Path(__file__).with_name("reports") / "als_tuning.json"
-INSIGHTS = ROOT / "analysis" / "insights_summary.json"
+INSIGHTS = ROOT / "recommendations" / "reports" / "insights_summary.json"
 README = ROOT / "README.md"
-EVALUATION_DOC = ROOT / "docs" / "evaluation.md"
+EVALUATION_DOC = ROOT / "docs" / "recommender.md"
 START, END = "<!-- RESULTS:START -->", "<!-- RESULTS:END -->"
 NAMES = {
     "random": "Random order", "popularity": "Popularity", "retrieval": "Retrieval score (previous production)",
@@ -63,7 +63,7 @@ def build(report: dict) -> str:
         f"co-purchase) → 11-feature LightGBM LambdaRank → {policy_summary(st)}. "
         "The evaluated policy is the code the storefront serves (`recommendations/policy.py`).",
         f"- **Evaluation:** 3-period temporal split, {st['embargo_days']}-day embargo, {oc['orders_with_new_products']:,} "
-        f"held-out orders (of {oc['test_orders']:,}; order counts in docs/evaluation.md), paired-bootstrap 95% CIs.",
+        f"held-out orders (of {oc['test_orders']:,}; order counts in docs/recommender.md), paired-bootstrap 95% CIs.",
         f"- **Headline:** served policy NDCG@10 {served:.4f} vs {rel['retrieval_ndcg10']:.4f} for retrieval order: "
         f"{diff['mean_diff']:+.4f} absolute (95% CI {diff['ci_low']:+.4f} to {diff['ci_high']:+.4f}), "
         f"{rel['value']:+.0%} relative (95% CI {rel['ci_low']:+.0%} to {rel['ci_high']:+.0%}); "
@@ -160,7 +160,7 @@ def catalog_size() -> int:
 
 
 def build_insights(summary: dict) -> str:
-    lines = ["*Generated from `analysis/insights_summary.json`, written when the notebook runs.*", ""]
+    lines = ["*Generated from `recommendations/reports/insights_summary.json`, written when `analysis/insights.ipynb` runs.*", ""]
     lines.append(f"- **Conversion:** {summary['session_conversion']:.1%} of {summary['sessions']:,} sessions end in a "
                  f"purchase; {summary['cart_to_purchase']:.0%} of cart adds are bought.")
     if summary["prepaid_rto"] > 0:
@@ -197,7 +197,7 @@ def build_insights(summary: dict) -> str:
     return "\n".join(lines)
 
 
-LEAK_REPORT = ROOT / "analysis" / "reports" / "churn_leak_before_fix.json"
+LEAK_REPORT = ROOT / "recommendations" / "reports" / "churn_leak_before_fix.json"
 POLICY_TUNING = ROOT / "recommendations" / "reports" / "policy_tuning.json"
 
 
@@ -226,13 +226,13 @@ def build_tldr(report: dict) -> str:
 
 
 def build_leak(summary: dict) -> str:
-    """The churn-leak story with numbers from analysis/reports/churn_leak_before_fix.json."""
+    """The churn-leak story with numbers from recommendations/reports/churn_leak_before_fix.json."""
     if not LEAK_REPORT.exists():
         return ""
     before = json.loads(LEAK_REPORT.read_text())
     leaky_auc, clean_auc = before["leaky_feature_test_auc"], before["leakage_free_test_auc"]
     return (
-        "*Generated from `analysis/reports/churn_leak_before_fix.json`.*\n\n"
+        "*Generated from `recommendations/reports/churn_leak_before_fix.json`.*\n\n"
         f"**A leak I found in my own data.** In an earlier version of this project, the first churn model looked good: "
         f"{before['model'].lower()} reached test ROC-AUC **{leaky_auc:.3f}**. The old generator's monthly churn features counted the whole snapshot month, so "
         f"{before['stored_feature_leaky_rows']:,} of {before['stored_feature_rows']:,} feature rows included orders placed "
@@ -311,7 +311,7 @@ def main() -> None:
 
 
 def build_policy_block(report: dict) -> str:
-    """Policy settings and the leave-one-source-out ablation, for docs/evaluation.md."""
+    """Policy settings and the leave-one-source-out ablation, for docs/recommender.md."""
     from recommendations.evaluate import ablation_lines, policy_text
 
     lines = ["*Generated from `recommendations/reports/evaluation_report.json` by "

@@ -1,4 +1,4 @@
-# Extra packages for the analysis notebook (python analysis/build_notebook.py).
+# Extra packages for the analysis notebook (jupyter execute --inplace analysis/insights.ipynb).
 -r requirements.txt
 matplotlib==3.11.2
 nbformat==5.11.1

@@ -122,7 +122,7 @@ of the card is on screen, and opening it adds a row to `recommendation_clicks`.
 
 ## Data analysis
 
-`analysis/pantree_insights.ipynb` explores the shop's data with charts; rebuild it with
-`pip install -r requirements-analysis.txt` then `python analysis/build_notebook.py`. The findings
-(generated from `analysis/insights_summary.json`) are listed in the
+`analysis/insights.ipynb` explores the shop's data with charts; re-run it with
+`pip install -r requirements-analysis.txt` then `jupyter execute --inplace analysis/insights.ipynb`. The findings
+(generated from `recommendations/reports/insights_summary.json`) are listed in the
 [README](../README.md#analytics-and-churn).

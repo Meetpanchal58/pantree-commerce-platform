@@ -1,4 +1,4 @@
-"""Build and execute analysis/pantree_insights.ipynb from the shop's data.
+"""Build and execute analysis/insights.ipynb from the shop's data.
 
 Run after `python prepare_data.py` (it reads the package tables in data/source/):
     python analysis/build_notebook.py
@@ -9,7 +9,7 @@ import nbformat as nbf
 from nbclient import NotebookClient
 
 HERE = Path(__file__).resolve().parent
-NB = HERE / "pantree_insights.ipynb"
+NB = HERE / "insights.ipynb"
 
 cells = []
 md = lambda s: cells.append(nbf.v4.new_markdown_cell(s.strip()))  # noqa: E731
@@ -82,7 +82,7 @@ realized = orders[orders["realized_revenue"] > 0].reset_index()
 customers = read("customers"); products = read("product_master")
 events = read("sale_events")
 events["start_date"] = pd.to_datetime(events["start_date"]); events["end_date"] = pd.to_datetime(events["end_date"])
-SUMMARY = {}  # key numbers, written to analysis/insights_summary.json for the README
+SUMMARY = {}  # key numbers, written to recommendations/reports/insights_summary.json for the README
 """)
 
 md("## 1. The dataset at a glance")
@@ -463,7 +463,7 @@ else:
 """)
 
 code("""
-summary_path = ROOT / "analysis" / "insights_summary.json"
+summary_path = ROOT / "recommendations" / "reports" / "insights_summary.json"
 summary_path.write_text(json.dumps(SUMMARY, indent=2, default=float))
 print(f"Wrote {summary_path.relative_to(ROOT)}")
 """)
