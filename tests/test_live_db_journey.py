@@ -23,7 +23,7 @@ os.environ.setdefault("APP_ENV", "test")
 from fastapi.testclient import TestClient  # noqa: E402
 
 import webapp.app as storefront  # noqa: E402
-from webapp import analytics_sync, core, database  # noqa: E402
+from webapp import analytics_sync, core, database, rec_logging  # noqa: E402
 
 PG_URL = os.getenv("PANTREE_TEST_DATABASE_URL", "")
 HAS_DATA = (ROOT / "data" / "product_master.parquet").exists()
@@ -35,6 +35,8 @@ def _reset_pools():
             module._POOL.close()
             module._POOL = None
     core._SCHEMA_CHECKED.clear()
+    rec_logging._TABLES_READY.clear()
+    core._CATALOG_CACHE.clear()
 
 
 @unittest.skipUnless(HAS_DATA, "needs the shop data (python prepare_data.py)")
