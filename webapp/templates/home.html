@@ -56,7 +56,7 @@
 
 <section class="home-section">
 	<div class="section-head"><div><div class="eyebrow">Browse the edit</div><h2 class="section">Shop by department</h2></div><a class="text-link" href="/browse">View all →</a></div>
-	<div class="department-grid">{% for d in departments %}<a class="department" href="/browse?department={{ d|urlencode }}"><span>{{ d }}</span><small>{{ home_stats.products // departments|length if departments else 0 }}+ styles</small><b>Explore →</b></a>{% endfor %}</div>
+	<div class="department-grid">{% for d in departments %}<a class="department" href="/browse?department={{ d|urlencode }}"><span>{{ d }}</span><small>{{ '{:,}'.format(home_stats.by_department.get(d, 0)) }} styles</small><b>Explore →</b></a>{% endfor %}</div>
 </section>
 
 <script src="/static/rec_tracking.js"></script>
