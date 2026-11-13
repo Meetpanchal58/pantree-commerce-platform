@@ -773,6 +773,21 @@ class SuperTokensAuthenticationTests(unittest.TestCase):
         self.assertIn("Create an account", payload["message"])
         create_code.assert_not_awaited()
 
+    def test_sign_up_right_after_a_failed_sign_in_is_not_told_to_wait(self):
+        """No code was sent for the unknown email, so switching to sign-up must not hit the cooldown."""
+        with patch.object(storefront.passwordless_async, "create_code", new=AsyncMock()) as create_code:
+            response = asyncio.run(
+                storefront.login_otp_request(request(), identifier="new@example.com", device="Desktop Web")
+            )
+        self.assertEqual(response.status_code, 404)
+        create_code.assert_not_awaited()
+        response, create_code, _ = self._signup_request()
+        self.assertEqual(response.status_code, 200, response.text)
+        create_code.assert_awaited_once()
+        # a real code was sent, so an immediate second request is still told to wait
+        again, _, _ = self._signup_request()
+        self.assertEqual(again.status_code, 429)
+
     def _signup_request(self, **fields):
         form = {
             "first_name": "Priya", "last_name": "Sharma", "email": "New@Example.com",

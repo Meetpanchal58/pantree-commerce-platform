@@ -322,3 +322,19 @@ def reserve_otp_request(
         )
     con.commit()
     return None
+
+
+def release_otp_request(con, identifier: str) -> None:
+    """Give back the per-contact cooldown when no code was sent.
+
+    Used when the account check rejects the request (no account / account exists) or
+    delivery fails, so the shopper can switch to sign-up or retry straight away. The
+    network-address row stays, so bulk probing is still limited per IP.
+    """
+    bucket = _bucket_hash("identifier", identifier)
+    con.execute(
+        """DELETE FROM auth_rate_limits WHERE bucket_hash=? AND created_at=(
+               SELECT MAX(created_at) FROM auth_rate_limits WHERE bucket_hash=?)""",
+        (bucket, bucket),
+    )
+    con.commit()

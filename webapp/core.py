@@ -73,6 +73,7 @@ try:
         TENANT_ID,
         delivery_channel_configured,
         initialize_supertokens,
+        release_otp_request,
         reserve_otp_request,
     )
 except ImportError:
@@ -92,6 +93,7 @@ except ImportError:
         TENANT_ID,
         delivery_channel_configured,
         initialize_supertokens,
+        release_otp_request,
         reserve_otp_request,
     )
 
