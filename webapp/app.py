@@ -1,8 +1,23 @@
 """FastAPI application assembly and middleware."""
 
+import faulthandler
+import sys
+import time
+
+_BOOT = time.monotonic()
+
+
+def _boot_log(step: str) -> None:
+    """Start-up progress in the host's logs (Render shows nothing until the port opens)."""
+    print(f"[startup {time.monotonic() - _BOOT:5.1f}s] {step}", file=sys.stderr, flush=True)
+
+
+_boot_log("importing the app")
+# If start-up stalls, print where every thread is stuck every 60 s until the app is ready.
+faulthandler.dump_traceback_later(60, repeat=True, file=sys.stderr)
+
 import asyncio
 import sqlite3
-import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -16,6 +31,7 @@ from fastapi.staticfiles import StaticFiles
 from supertokens_python.exceptions import SuperTokensError
 from supertokens_python.recipe.session.exceptions import TryRefreshTokenError
 
+_boot_log("loading web framework, database layer, sign-in and recommender")
 from webapp import core, database
 from webapp.core import (
     DB,
@@ -65,6 +81,8 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Pantree Storefront", lifespan=lifespan)
+_boot_log("app created; the server will now open its port")
+faulthandler.cancel_dump_traceback_later()
 app.add_middleware(core.get_middleware())
 static_dir = core.BASE / "static"
 if static_dir.exists():
